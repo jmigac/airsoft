@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requestIsAdmin } from "@/lib/admin-auth";
 import { broadcastState } from "@/lib/events";
+import { isValidCETDateTime, normalizeCETDateTimeInput } from "@/lib/mission-time";
 import { isValidQuestPayload } from "@/lib/payload";
 import { updateState } from "@/lib/store";
 
@@ -11,6 +12,7 @@ type CreateMissionPayload = {
   name?: string;
   qrCode?: string;
   mapCenter?: { lat?: number; lng?: number };
+  timeWindowCET?: { startsAtCET?: string; endsAtCET?: string };
   locations?: Array<{ lat?: number; lng?: number; radius?: number }>;
 };
 
@@ -23,6 +25,9 @@ export async function POST(request: NextRequest) {
   const name = payload.name?.trim();
   const qrCode = payload.qrCode?.trim();
   const mapCenter = payload.mapCenter;
+  const startsAtCET = normalizeCETDateTimeInput(payload.timeWindowCET?.startsAtCET ?? "");
+  const endsAtCET = normalizeCETDateTimeInput(payload.timeWindowCET?.endsAtCET ?? "");
+  const hasTimeWindow = startsAtCET.length > 0 || endsAtCET.length > 0;
   const locations = payload.locations ?? [];
 
   if (!name || !qrCode) {
@@ -56,6 +61,29 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Map center latitude/longitude must be valid numbers." }, { status: 400 });
   }
 
+  if (hasTimeWindow) {
+    if (!startsAtCET || !endsAtCET) {
+      return NextResponse.json(
+        { error: "For time-critical missions, both CET start and end are required." },
+        { status: 400 }
+      );
+    }
+
+    if (!isValidCETDateTime(startsAtCET) || !isValidCETDateTime(endsAtCET)) {
+      return NextResponse.json(
+        { error: "CET start/end must use a valid date and time (YYYY-MM-DDTHH:mm)." },
+        { status: 400 }
+      );
+    }
+
+    if (startsAtCET >= endsAtCET) {
+      return NextResponse.json(
+        { error: "CET start time must be before CET end time." },
+        { status: 400 }
+      );
+    }
+  }
+
   try {
     const state = await updateState((current) => {
       if (current.missions.some((mission) => mission.qrCode === qrCode)) {
@@ -74,6 +102,12 @@ export async function POST(request: NextRequest) {
               ? {
                   lat: Number(mapCenter.lat),
                   lng: Number(mapCenter.lng)
+                }
+              : undefined,
+            timeWindowCET: hasTimeWindow
+              ? {
+                  startsAtCET,
+                  endsAtCET
                 }
               : undefined,
             createdAt: new Date().toISOString(),

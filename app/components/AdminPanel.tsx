@@ -2,6 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import {
+  formatCETDateTime,
+  isValidCETDateTime,
+  normalizeCETDateTimeInput
+} from "@/lib/mission-time";
 import { generateQuestPayload, isValidQuestPayload, sanitizeQuestPayload } from "@/lib/payload";
 import { buildPinRevealPath, buildTriggerPath } from "@/lib/qr";
 import { Mission } from "@/lib/types";
@@ -10,6 +15,7 @@ export type MissionPayload = {
   name: string;
   qrCode: string;
   mapCenter?: { lat: number; lng: number };
+  timeWindowCET?: { startsAtCET: string; endsAtCET: string };
   locations: Array<{ lat: number; lng: number; radius: number }>;
 };
 
@@ -47,6 +53,9 @@ export default function AdminPanel({
   const [lng, setLng] = useState("");
   const [mapCenterLat, setMapCenterLat] = useState("");
   const [mapCenterLng, setMapCenterLng] = useState("");
+  const [useTimeWindowCET, setUseTimeWindowCET] = useState(false);
+  const [startsAtCET, setStartsAtCET] = useState("");
+  const [endsAtCET, setEndsAtCET] = useState("");
   const [radius, setRadius] = useState(String(DEFAULT_LOCATION_RADIUS_METERS));
   const [locations, setLocations] = useState<Array<{ lat: number; lng: number; radius: number }>>([]);
   const [error, setError] = useState<string | null>(null);
@@ -226,6 +235,8 @@ export default function AdminPanel({
     const normalizedPayload = qrCode.trim();
     const trimmedCenterLat = mapCenterLat.trim();
     const trimmedCenterLng = mapCenterLng.trim();
+    const normalizedStartsAtCET = normalizeCETDateTimeInput(startsAtCET);
+    const normalizedEndsAtCET = normalizeCETDateTimeInput(endsAtCET);
 
     if (!name.trim() || !normalizedPayload) {
       setError("Mission name and payload are required.");
@@ -240,6 +251,29 @@ export default function AdminPanel({
     if (locations.length === 0) {
       setError("Add at least one location circle.");
       return;
+    }
+
+    let timeWindowCET: { startsAtCET: string; endsAtCET: string } | undefined;
+    if (useTimeWindowCET) {
+      if (!normalizedStartsAtCET || !normalizedEndsAtCET) {
+        setError("For time-critical mission, provide both start and end in CET.");
+        return;
+      }
+
+      if (!isValidCETDateTime(normalizedStartsAtCET) || !isValidCETDateTime(normalizedEndsAtCET)) {
+        setError("CET start/end must be valid date+time values.");
+        return;
+      }
+
+      if (normalizedStartsAtCET >= normalizedEndsAtCET) {
+        setError("CET start must be before CET end.");
+        return;
+      }
+
+      timeWindowCET = {
+        startsAtCET: normalizedStartsAtCET,
+        endsAtCET: normalizedEndsAtCET
+      };
     }
 
     let mapCenter: { lat: number; lng: number } | undefined;
@@ -265,12 +299,16 @@ export default function AdminPanel({
         name: name.trim(),
         qrCode: normalizedPayload,
         mapCenter,
+        timeWindowCET,
         locations
       });
       setName("");
       setQrCode("");
       setMapCenterLat("");
       setMapCenterLng("");
+      setUseTimeWindowCET(false);
+      setStartsAtCET("");
+      setEndsAtCET("");
       setLocations([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create mission");
@@ -384,6 +422,36 @@ export default function AdminPanel({
           </button>
         </div>
 
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={useTimeWindowCET}
+            onChange={(event) => setUseTimeWindowCET(event.target.checked)}
+          />
+          <span>Time-critical mission (redeemable only in CET interval)</span>
+        </label>
+
+        {useTimeWindowCET && (
+          <div className="time-window-grid">
+            <label>
+              <span className="muted">Start (CET)</span>
+              <input
+                type="datetime-local"
+                value={startsAtCET}
+                onChange={(event) => setStartsAtCET(normalizeCETDateTimeInput(event.target.value))}
+              />
+            </label>
+            <label>
+              <span className="muted">End (CET)</span>
+              <input
+                type="datetime-local"
+                value={endsAtCET}
+                onChange={(event) => setEndsAtCET(normalizeCETDateTimeInput(event.target.value))}
+              />
+            </label>
+          </div>
+        )}
+
         <h3>Map Center For This Quest</h3>
         <div className="location-grid">
           <input
@@ -462,6 +530,16 @@ export default function AdminPanel({
                     <span className="muted">Map center:</span>
                     <code>
                       {mission.mapCenter.lat.toFixed(6)}, {mission.mapCenter.lng.toFixed(6)}
+                    </code>
+                  </div>
+                )}
+
+                {mission.timeWindowCET && (
+                  <div className="endpoint-box">
+                    <span className="muted">Redeem window (CET):</span>
+                    <code>
+                      {formatCETDateTime(mission.timeWindowCET.startsAtCET)} -{" "}
+                      {formatCETDateTime(mission.timeWindowCET.endsAtCET)}
                     </code>
                   </div>
                 )}

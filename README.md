@@ -2,6 +2,14 @@
 
 Online Airsoft Quest tracker with maps integration.
 
+## Time-critical missions (CET)
+
+When creating a mission in Admin, you can optionally enable a CET time window.
+
+- Mission can be redeemed only between the configured start/end times (CET).
+- Outside that range, redemption returns a clear error message that the mission is time-critical.
+- After the window expires, the mission is shown as failed on the map (red circle with red `X`).
+
 ## Supabase persistence setup
 
 This app now stores game state in Supabase instead of local files.
