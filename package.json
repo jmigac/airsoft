@@ -6,12 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "seed:supabase": "node scripts/seed-supabase-store.mjs"
   },
   "dependencies": {
     "@types/qrcode": "^1.5.6",
     "leaflet": "^1.9.4",
-    "next": "15.5.12",
+    "next": "^16.1.6",
     "qrcode": "^1.5.4",
     "react": "19.2.1",
     "react-dom": "19.2.1",
