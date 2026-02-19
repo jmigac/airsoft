@@ -1,0 +1,41 @@
+{
+  "missions": [
+    {
+      "id": "b9ab2535-a13c-443c-af77-259058467dbd",
+      "name": "Blow Alamo Gate",
+      "qrCode": "527432",
+      "createdAt": "2026-02-19T11:17:19.444Z",
+      "locations": [
+        {
+          "id": "ad0cefec-b3de-493a-82e7-fb00378cb9a1",
+          "lat": 46.24544,
+          "lng": 16.108849,
+          "radius": 15
+        }
+      ]
+    },
+    {
+      "id": "22135130-320a-41ca-ba7c-0082eec114b4",
+      "name": "Village PIN",
+      "qrCode": "271960",
+      "createdAt": "2026-02-19T11:17:40.483Z",
+      "locations": [
+        {
+          "id": "6393d87b-9e3b-44b3-b489-d9095b8d1c86",
+          "lat": 46.245388,
+          "lng": 16.109321,
+          "radius": 3
+        }
+      ]
+    }
+  ],
+  "completions": [
+    {
+      "id": "39aa17d4-59cb-4f15-9465-bcf6bc1bdb28",
+      "missionId": "b9ab2535-a13c-443c-af77-259058467dbd",
+      "team": "red",
+      "qrCode": "527432",
+      "completedAt": "2026-02-19T11:26:15.495Z"
+    }
+  ]
+}
