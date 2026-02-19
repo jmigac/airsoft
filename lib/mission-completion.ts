@@ -1,4 +1,5 @@
 import { broadcastState } from "./events";
+import { buildMissionOutOfWindowMessage, getMissionTimeWindowStatus } from "./mission-time";
 import { isValidQuestPayload } from "./payload";
 import { normalizeQrPayload } from "./qr";
 import { readState, updateState } from "./store";
@@ -18,6 +19,17 @@ export async function completeMissionByQrCode(team: Team, rawQrPayload: string) 
   const mission = current.missions.find((item) => item.qrCode === qrCode);
   if (!mission) {
     throw new Error("No quest is configured for this payload.");
+  }
+
+  const existingCompletion = current.completions.some(
+    (completion) => completion.missionId === mission.id && completion.team === team
+  );
+
+  if (!existingCompletion) {
+    const windowStatus = getMissionTimeWindowStatus(mission);
+    if (windowStatus === "too_early" || windowStatus === "expired") {
+      throw new Error(buildMissionOutOfWindowMessage(mission));
+    }
   }
 
   let alreadyCompleted = false;

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Circle, MapContainer, Popup, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
+import { formatCETDateTime, isMissionExpired } from "@/lib/mission-time";
 import { Completion, Mission, Team } from "@/lib/types";
 
 type Props = {
@@ -58,6 +59,18 @@ export default function MissionMap({
   onMapClick = () => undefined,
   centerOverride = null
 }: Props) {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setNow(new Date());
+    }, 30_000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, []);
+
   const completedMissionIds = new Set(
     completions
       .filter((completion) => (selectedTeam ? completion.team === selectedTeam : true))
@@ -82,6 +95,8 @@ export default function MissionMap({
         {missions.map((mission) =>
           mission.locations.map((location) => {
             const done = completedMissionIds.has(mission.id);
+            const failed = !done && isMissionExpired(mission, now);
+            const circleColor = done ? "#179b61" : failed ? "#cc2f2f" : "#ad6a1a";
 
             return (
               <Circle
@@ -89,18 +104,31 @@ export default function MissionMap({
                 center={[location.lat, location.lng]}
                 radius={location.radius}
                 pathOptions={{
-                  color: done ? "#179b61" : "#ad6a1a",
-                  fillColor: done ? "#179b61" : "#ad6a1a",
+                  color: circleColor,
+                  fillColor: circleColor,
                   fillOpacity: 0.25
                 }}
               >
                 <Tooltip permanent direction="center" className="mission-circle-label" opacity={1}>
-                  {mission.name}
+                  {failed ? <span className="mission-failed-x">X</span> : mission.name}
                 </Tooltip>
                 <Popup>
                   <strong>{mission.name}</strong>
                   <br />
                   Radius: {location.radius}m
+                  {mission.timeWindowCET && (
+                    <>
+                      <br />
+                      Window: {formatCETDateTime(mission.timeWindowCET.startsAtCET)} -{" "}
+                      {formatCETDateTime(mission.timeWindowCET.endsAtCET)}
+                    </>
+                  )}
+                  {failed && (
+                    <>
+                      <br />
+                      <span className="popup-failed">FAILED (out of time)</span>
+                    </>
+                  )}
                 </Popup>
               </Circle>
             );

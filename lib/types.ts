@@ -9,6 +9,11 @@ export type MissionLocation = {
   radius: number;
 };
 
+export type MissionTimeWindowCET = {
+  startsAtCET: string;
+  endsAtCET: string;
+};
+
 export type Mission = {
   id: string;
   name: string;
@@ -17,6 +22,7 @@ export type Mission = {
     lat: number;
     lng: number;
   };
+  timeWindowCET?: MissionTimeWindowCET;
   locations: MissionLocation[];
   createdAt: string;
 };

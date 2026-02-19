@@ -197,6 +197,18 @@ ul {
   display: none;
 }
 
+.mission-failed-x {
+  color: #cc2f2f;
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.popup-failed {
+  color: #cc2f2f;
+  font-weight: 800;
+}
+
 .team-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -289,6 +301,28 @@ ul {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
+.time-window-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.time-window-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
 }
 
 .endpoint-box {
@@ -438,6 +472,10 @@ ul {
   }
 
   .location-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .time-window-grid {
     grid-template-columns: 1fr;
   }
 
