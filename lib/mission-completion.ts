@@ -5,7 +5,7 @@ import { normalizeQrPayload } from "./qr";
 import { readState, updateState } from "./store";
 import { Team } from "./types";
 
-export async function completeMissionByQrCode(team: Team, rawQrPayload: string) {
+export async function completeMissionByQrCode(gameCode: string, team: Team, rawQrPayload: string) {
   const qrCode = normalizeQrPayload(rawQrPayload);
   if (!qrCode) {
     throw new Error("Quest payload is required.");
@@ -15,7 +15,7 @@ export async function completeMissionByQrCode(team: Team, rawQrPayload: string) 
     throw new Error("Quest payload must be exactly 6 digits.");
   }
 
-  const current = await readState();
+  const current = await readState(gameCode);
   const mission = current.missions.find((item) => item.qrCode === qrCode);
   if (!mission) {
     throw new Error("No quest is configured for this payload.");
@@ -33,7 +33,7 @@ export async function completeMissionByQrCode(team: Team, rawQrPayload: string) 
   }
 
   let alreadyCompleted = false;
-  const state = await updateState((previous) => {
+  const state = await updateState(gameCode, (previous) => {
     const exists = previous.completions.some(
       (completion) => completion.missionId === mission.id && completion.team === team
     );
@@ -59,7 +59,7 @@ export async function completeMissionByQrCode(team: Team, rawQrPayload: string) 
   });
 
   if (!alreadyCompleted) {
-    broadcastState({ type: "completion_added", state });
+    broadcastState({ gameCode, type: "completion_added", state });
   }
 
   return {

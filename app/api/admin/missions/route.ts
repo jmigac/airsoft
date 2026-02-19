@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requestIsAdmin } from "@/lib/admin-auth";
 import { broadcastState } from "@/lib/events";
+import { requireGameCodeFromRequest } from "@/lib/game-request";
 import { isValidCETDateTime, normalizeCETDateTimeInput } from "@/lib/mission-time";
 import { isValidQuestPayload } from "@/lib/payload";
 import { updateState } from "@/lib/store";
@@ -17,7 +18,13 @@ type CreateMissionPayload = {
 };
 
 export async function POST(request: NextRequest) {
-  if (!requestIsAdmin(request)) {
+  const game = requireGameCodeFromRequest(request);
+  if (!game.ok) {
+    return game.response;
+  }
+
+  const gameCode = game.gameCode;
+  if (!requestIsAdmin(request, gameCode)) {
     return NextResponse.json({ error: "Admin privileges required" }, { status: 401 });
   }
 
@@ -85,7 +92,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const state = await updateState((current) => {
+    const state = await updateState(gameCode, (current) => {
       if (current.missions.some((mission) => mission.qrCode === qrCode)) {
         throw new Error("A mission with this payload already exists.");
       }
@@ -122,7 +129,7 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    broadcastState({ type: "mission_created", state });
+    broadcastState({ gameCode, type: "mission_created", state });
     return NextResponse.json({ ok: true, state });
   } catch (error) {
     return NextResponse.json(

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { normalizeGameCode } from "@/lib/game-code";
 import { completeMissionByQrCode } from "@/lib/mission-completion";
 import { TEAMS, Team } from "@/lib/types";
 
@@ -18,9 +19,9 @@ function teamFromInput(value: string | null) {
   return normalized;
 }
 
-async function runCompletion(team: Team, payloadFromPath: string) {
+async function runCompletion(gameCode: string, team: Team, payloadFromPath: string) {
   try {
-    const result = await completeMissionByQrCode(team, payloadFromPath);
+    const result = await completeMissionByQrCode(gameCode, team, payloadFromPath);
     return NextResponse.json({
       ok: true,
       state: result.state,
@@ -31,7 +32,7 @@ async function runCompletion(team: Team, payloadFromPath: string) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Trigger failed";
-    const status = message.includes("No quest") ? 404 : 400;
+    const status = message.includes("No quest") || message.includes("Game not found") ? 404 : 400;
     return NextResponse.json({ error: message }, { status });
   }
 }
@@ -43,6 +44,14 @@ export async function GET(
   const params = await context.params;
   const payloadFromPath = decodeURIComponent(params.payload);
   const team = teamFromInput(request.nextUrl.searchParams.get("team"));
+  const gameCode = normalizeGameCode(request.nextUrl.searchParams.get("game"));
+
+  if (!gameCode) {
+    return NextResponse.json(
+      { error: "Valid game code is required via ?game=XXXXXX." },
+      { status: 400 }
+    );
+  }
 
   if (!team) {
     return NextResponse.json(
@@ -50,13 +59,14 @@ export async function GET(
         ok: true,
         message: "Add ?team=red|blue to trigger completion from this endpoint.",
         payload: payloadFromPath,
+        gameCode,
         validTeams: TEAMS
       },
       { status: 200 }
     );
   }
 
-  return runCompletion(team, payloadFromPath);
+  return runCompletion(gameCode, team, payloadFromPath);
 }
 
 export async function POST(
@@ -67,6 +77,14 @@ export async function POST(
   const payloadFromPath = decodeURIComponent(params.payload);
   const payload = (await request.json().catch(() => ({}))) as { team?: string };
   const team = teamFromInput(payload.team ?? null);
+  const gameCode = normalizeGameCode(request.nextUrl.searchParams.get("game"));
+
+  if (!gameCode) {
+    return NextResponse.json(
+      { error: "Valid game code is required via ?game=XXXXXX." },
+      { status: 400 }
+    );
+  }
 
   if (!team) {
     return NextResponse.json(
@@ -75,5 +93,5 @@ export async function POST(
     );
   }
 
-  return runCompletion(team, payloadFromPath);
+  return runCompletion(gameCode, team, payloadFromPath);
 }

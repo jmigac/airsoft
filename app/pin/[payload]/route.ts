@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { normalizeGameCode } from "@/lib/game-code";
 import { isValidQuestPayload } from "@/lib/payload";
 
 export const runtime = "nodejs";
@@ -22,12 +23,15 @@ function escapeHtml(value: string) {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ payload: string }> }
 ) {
   const params = await context.params;
   const decodedPayload = safeDecode(params.payload);
   const visiblePayload = isValidQuestPayload(decodedPayload) ? decodedPayload : "------";
+  const requestUrl = new URL(request.url);
+  const gameCode = normalizeGameCode(requestUrl.searchParams.get("game"));
+  const returnHref = gameCode ? `/?game=${encodeURIComponent(gameCode)}` : "/";
 
   const html = `<!doctype html>
 <html lang="en">
@@ -85,7 +89,7 @@ export async function GET(
   <body>
     <main class="pin-page">
       <h1>${escapeHtml(visiblePayload)}</h1>
-      <a class="back-home" href="/">Return to Home</a>
+      <a class="back-home" href="${escapeHtml(returnHref)}">Return to Home</a>
     </main>
   </body>
 </html>`;

@@ -1,11 +1,27 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { onState } from "@/lib/events";
+import { requireGameCodeFromRequest } from "@/lib/game-request";
 import { readState } from "@/lib/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const game = requireGameCodeFromRequest(request);
+  if (!game.ok) {
+    return game.response;
+  }
+
+  const gameCode = game.gameCode;
+  let initialState;
+  try {
+    initialState = await readState(gameCode);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Game not found.";
+    const status = message.includes("not found") ? 404 : 400;
+    return NextResponse.json({ error: message }, { status });
+  }
+
   const encoder = new TextEncoder();
   let keepAlive: ReturnType<typeof setInterval> | undefined;
   let unsubscribe: () => void = () => {};
@@ -17,11 +33,10 @@ export async function GET() {
       };
 
       send({ type: "connected" });
-      const initialState = await readState();
       send({ type: "sync", state: initialState });
 
-      unsubscribe = onState((event) => {
-        send(event);
+      unsubscribe = onState(gameCode, (event) => {
+        send({ type: event.type, state: event.state });
       });
 
       keepAlive = setInterval(() => {

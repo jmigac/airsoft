@@ -29,8 +29,18 @@ export type MissionPayload = {
 };
 
 const DEFAULT_LOCATION_RADIUS_METERS = 15;
+const ADMIN_TAB_ITEMS = [
+  { id: "map_settings", label: "Map Settings" },
+  { id: "tactical_icons", label: "Tactical Icons" },
+  { id: "map_shapes", label: "Map Shapes" },
+  { id: "mission_builder", label: "Mission Builder" },
+  { id: "existing_missions", label: "Existing Missions" }
+] as const;
+
+type AdminTabId = (typeof ADMIN_TAB_ITEMS)[number]["id"];
 
 type Props = {
+  gameCode: string;
   isAdmin: boolean;
   missions: Mission[];
   mapMarkers: MapMarker[];
@@ -64,6 +74,7 @@ type Props = {
 };
 
 export default function AdminPanel({
+  gameCode,
   isAdmin,
   missions,
   mapMarkers,
@@ -110,6 +121,7 @@ export default function AdminPanel({
   const [appOrigin, setAppOrigin] = useState("");
   const [draftQrPreview, setDraftQrPreview] = useState<string | null>(null);
   const [missionQrPreviews, setMissionQrPreviews] = useState<Record<string, string>>({});
+  const [activeTab, setActiveTab] = useState<AdminTabId>("map_settings");
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -158,8 +170,8 @@ export default function AdminPanel({
       return "";
     }
 
-    return `${appOrigin}${buildPinRevealPath(payload)}`;
-  }, [appOrigin, qrCode]);
+    return `${appOrigin}${buildPinRevealPath(payload, gameCode)}`;
+  }, [appOrigin, gameCode, qrCode]);
 
   const draftTriggerEndpoint = useMemo(() => {
     const payload = qrCode.trim();
@@ -167,8 +179,8 @@ export default function AdminPanel({
       return "";
     }
 
-    return `${appOrigin}${buildTriggerPath(payload)}`;
-  }, [appOrigin, qrCode]);
+    return `${appOrigin}${buildTriggerPath(payload, gameCode)}`;
+  }, [appOrigin, gameCode, qrCode]);
 
   useEffect(() => {
     if (!draftPinRevealUrl) {
@@ -217,7 +229,7 @@ export default function AdminPanel({
         const nextPreviews: Record<string, string> = {};
 
         for (const mission of missions) {
-          const revealUrl = `${appOrigin}${buildPinRevealPath(mission.qrCode)}`;
+          const revealUrl = `${appOrigin}${buildPinRevealPath(mission.qrCode, gameCode)}`;
           nextPreviews[mission.id] = await qr.toDataURL(revealUrl, {
             width: 150,
             margin: 1
@@ -239,7 +251,7 @@ export default function AdminPanel({
     return () => {
       cancelled = true;
     };
-  }, [appOrigin, isAdmin, missions]);
+  }, [appOrigin, gameCode, isAdmin, missions]);
 
   const doLogin = async () => {
     try {
@@ -578,16 +590,48 @@ export default function AdminPanel({
   }
 
   return (
-    <section className="panel">
+    <section className="panel admin-panel">
       <div className="admin-header">
-        <h2>Admin Panel</h2>
+        <h2>Admin Panel ({gameCode})</h2>
         <button type="button" onClick={() => void onLogout()} disabled={busy}>
           Logout
         </button>
       </div>
 
+      <div className="admin-tabs" role="tablist" aria-label="Admin sections">
+        {ADMIN_TAB_ITEMS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            className={`admin-tab-btn ${activeTab === tab.id ? "active" : ""}`}
+            onClick={() => setActiveTab(tab.id)}
+            title={tab.label}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <label className="admin-tab-select-wrap">
+        <span className="muted">Section</span>
+        <select
+          value={activeTab}
+          onChange={(event) => setActiveTab(event.target.value as AdminTabId)}
+          aria-label="Select admin section"
+        >
+          {ADMIN_TAB_ITEMS.map((tab) => (
+            <option key={tab.id} value={tab.id}>
+              {tab.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
       <div className="admin-form">
-        <section className="admin-section">
+        {activeTab === "map_settings" && (
+          <section className="admin-section">
           <h3>1. Map Settings</h3>
           <p className="muted">Set the visitor start position and toggle map click picker.</p>
 
@@ -634,9 +678,11 @@ export default function AdminPanel({
               Current visitor map start: {defaultMapCenter.lat.toFixed(6)}, {defaultMapCenter.lng.toFixed(6)}
             </p>
           )}
-        </section>
+          </section>
+        )}
 
-        <section className="admin-section">
+        {activeTab === "tactical_icons" && (
+          <section className="admin-section">
           <h3>2. Tactical Icons</h3>
           <p className="muted">Pick a point from map, enter icon name, choose color, then add marker.</p>
 
@@ -709,9 +755,11 @@ export default function AdminPanel({
               })}
             </ul>
           )}
-        </section>
+          </section>
+        )}
 
-        <section className="admin-section">
+        {activeTab === "map_shapes" && (
+          <section className="admin-section">
           <h3>3. Map Shapes</h3>
           <p className="muted">Pick points from map, then draw polygon with color, transparency and label.</p>
 
@@ -787,9 +835,11 @@ export default function AdminPanel({
               ))}
             </ul>
           )}
-        </section>
+          </section>
+        )}
 
-        <section className="admin-section">
+        {activeTab === "mission_builder" && (
+          <section className="admin-section">
           <h3>4. Mission Builder</h3>
           <p className="muted">Create mission payload, locations, time window and quest map center.</p>
 
@@ -937,10 +987,12 @@ export default function AdminPanel({
           <button type="button" onClick={() => void submitMission()} disabled={busy}>
             {busy ? "Saving..." : "Save Mission"}
           </button>
-        </section>
+          </section>
+        )}
       </div>
 
-      <section className="admin-section">
+      {activeTab === "existing_missions" && (
+        <section className="admin-section">
         <h3>5. Existing Missions</h3>
         <p className="muted">Review, copy payload links, focus map, or delete existing missions.</p>
 
@@ -949,8 +1001,8 @@ export default function AdminPanel({
         {missions.length > 0 && (
           <ul className="mission-list">
             {missions.map((mission) => {
-              const endpoint = appOrigin ? `${appOrigin}${buildTriggerPath(mission.qrCode)}` : "";
-              const revealUrl = appOrigin ? `${appOrigin}${buildPinRevealPath(mission.qrCode)}` : "";
+              const endpoint = appOrigin ? `${appOrigin}${buildTriggerPath(mission.qrCode, gameCode)}` : "";
+              const revealUrl = appOrigin ? `${appOrigin}${buildPinRevealPath(mission.qrCode, gameCode)}` : "";
               const qrPreview = missionQrPreviews[mission.id];
               const fallbackCenter = mission.locations[0]
                 ? { lat: mission.locations[0].lat, lng: mission.locations[0].lng }
@@ -1045,7 +1097,8 @@ export default function AdminPanel({
             })}
           </ul>
         )}
-      </section>
+        </section>
+      )}
 
       {error && <p className="error">{error}</p>}
     </section>

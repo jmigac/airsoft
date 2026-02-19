@@ -9,6 +9,8 @@ const SUPABASE_URL = (process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABA
 );
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const GAME_STATE_ID = 1;
+const STORE_SCHEMA_VERSION = 2;
+const DEFAULT_GAME_CODE = (process.env.SEED_GAME_CODE ?? "LEGACY1").toUpperCase();
 const MAP_MARKER_TYPES = new Set(["village", "north_spawn", "south_spawn", "house"]);
 const MAP_MARKER_META = {
   village: { label: "Village", color: "#f0a020" },
@@ -28,6 +30,18 @@ function normalizeMarkerColor(value) {
   }
 
   return trimmed.toLowerCase();
+}
+
+function normalizeGameCode(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const cleaned = value
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6);
+  return /^[A-Z0-9]{6}$/.test(cleaned) ? cleaned : null;
 }
 
 function assertEnv() {
@@ -170,7 +184,7 @@ async function ensureRow() {
     body: JSON.stringify([
       {
         id: GAME_STATE_ID,
-        state: { missions: [], completions: [], defaultMapCenter: undefined, mapMarkers: [], mapShapes: [] },
+        state: { schemaVersion: STORE_SCHEMA_VERSION, games: {} },
         version: 1
       }
     ])
@@ -204,6 +218,16 @@ async function main() {
   const raw = await readFile(sourcePath, "utf8");
   const parsed = JSON.parse(raw);
   const state = normalizeState(parsed);
+  const seedGameCode = normalizeGameCode(process.argv[3] ?? DEFAULT_GAME_CODE);
+  if (!seedGameCode) {
+    throw new Error("Invalid seed game code. Use a 6-character alphanumeric invite code.");
+  }
+  const store = {
+    schemaVersion: STORE_SCHEMA_VERSION,
+    games: {
+      [seedGameCode]: state
+    }
+  };
 
   await ensureRow();
   const currentVersion = await readVersion();
@@ -217,12 +241,12 @@ async function main() {
     method: "PATCH",
     headers: buildHeaders("return=representation"),
     body: JSON.stringify({
-      state,
+      state: store,
       version: currentVersion + 1
     })
   });
 
-  console.log(`Seeded Supabase game_state from ${sourcePath}`);
+  console.log(`Seeded Supabase game_state from ${sourcePath} into game ${seedGameCode}`);
 }
 
 main().catch((error) => {

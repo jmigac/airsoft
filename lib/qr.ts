@@ -1,12 +1,20 @@
 const TRIGGER_ROUTE_PREFIX = "/api/trigger/";
 const PIN_REVEAL_ROUTE_PREFIX = "/pin/";
 
-export function buildTriggerPath(qrCode: string) {
-  return `${TRIGGER_ROUTE_PREFIX}${encodeURIComponent(qrCode)}`;
+function appendGameCode(path: string, gameCode?: string) {
+  if (!gameCode) {
+    return path;
+  }
+
+  return `${path}?game=${encodeURIComponent(gameCode)}`;
 }
 
-export function buildPinRevealPath(payload: string) {
-  return `${PIN_REVEAL_ROUTE_PREFIX}${encodeURIComponent(payload)}`;
+export function buildTriggerPath(qrCode: string, gameCode?: string) {
+  return appendGameCode(`${TRIGGER_ROUTE_PREFIX}${encodeURIComponent(qrCode)}`, gameCode);
+}
+
+export function buildPinRevealPath(payload: string, gameCode?: string) {
+  return appendGameCode(`${PIN_REVEAL_ROUTE_PREFIX}${encodeURIComponent(payload)}`, gameCode);
 }
 
 export function normalizeQrPayload(rawPayload: string) {
