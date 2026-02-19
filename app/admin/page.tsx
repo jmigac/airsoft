@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import AdminPanel, { MissionPayload } from "@/app/components/AdminPanel";
+import { clearGameCodeCookie, readGameCodeCookie, writeGameCodeCookie } from "@/lib/game-cookie";
 import { normalizeGameCode, sanitizeGameCode } from "@/lib/game-code";
 import { GameState, MapShapeDraft } from "@/lib/types";
 
@@ -17,7 +18,8 @@ const INITIAL_STATE: GameState = {
   completions: [],
   defaultMapCenter: undefined,
   mapMarkers: [],
-  mapShapes: []
+  mapShapes: [],
+  mapSignals: []
 };
 
 function appendGameCode(path: string, gameCode: string) {
@@ -58,9 +60,8 @@ export default function AdminPage() {
       const search = new URLSearchParams(window.location.search);
       return normalizeGameCode(search.get("game"));
     })();
-    const fromStorage =
-      typeof window !== "undefined" ? normalizeGameCode(localStorage.getItem("game_code")) : null;
-    const initialGameCode = fromUrl ?? fromStorage;
+    const fromCookie = readGameCodeCookie();
+    const initialGameCode = fromUrl ?? fromCookie;
 
     if (!initialGameCode) {
       return;
@@ -68,7 +69,7 @@ export default function AdminPage() {
 
     setGameCode(initialGameCode);
     setGameInput(initialGameCode);
-    localStorage.setItem("game_code", initialGameCode);
+    writeGameCodeCookie(initialGameCode);
   }, []);
 
   useEffect(() => {
@@ -105,7 +106,7 @@ export default function AdminPage() {
           setError(loadError instanceof Error ? loadError.message : "Failed to load admin state.");
           setGameCode(null);
           setIsAdmin(false);
-          localStorage.removeItem("game_code");
+          clearGameCodeCookie();
           if (typeof window !== "undefined") {
             window.history.replaceState(null, "", "/admin");
           }
@@ -160,7 +161,7 @@ export default function AdminPage() {
     setState(INITIAL_STATE);
     setError(null);
     setIsAdmin(false);
-    localStorage.setItem("game_code", nextCode);
+    writeGameCodeCookie(nextCode);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", `/admin?game=${encodeURIComponent(nextCode)}`);
     }
@@ -414,6 +415,8 @@ export default function AdminPage() {
           <p className="muted">Enter game invite code to manage an existing game or create a new one.</p>
 
           <input
+            id="admin-game-invite-code"
+            name="admin_game_invite_code"
             type="text"
             placeholder="Invite code"
             value={gameInput}
@@ -425,7 +428,7 @@ export default function AdminPage() {
             <button type="button" onClick={() => void joinGame()} disabled={busy}>
               {busy ? "Please wait..." : "Open Existing Game"}
             </button>
-            <button type="button" onClick={() => void createGame()} disabled={busy}>
+            <button type="button" onClick={() => void createGame()} disabled>
               {busy ? "Please wait..." : "Create New Game"}
             </button>
             <Link href="/" className="nav-link-btn">
@@ -466,6 +469,7 @@ export default function AdminPage() {
               completions={state.completions}
               mapMarkers={state.mapMarkers ?? []}
               mapShapes={state.mapShapes ?? []}
+              mapSignals={state.mapSignals ?? []}
               selectedTeam={null}
               mapPickMode={mapPickMode}
               onMapClick={(point) => setPendingMapPoint(point)}

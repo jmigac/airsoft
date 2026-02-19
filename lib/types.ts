@@ -14,6 +14,20 @@ export type MapCenter = {
   lng: number;
 };
 
+export const MAP_SIGNAL_TYPES = ["info", "danger", "intel"] as const;
+
+export type MapSignalType = (typeof MAP_SIGNAL_TYPES)[number];
+
+export type MapSignal = {
+  id: string;
+  type: MapSignalType;
+  team: Team;
+  lat: number;
+  lng: number;
+  createdAt: string;
+  expiresAt: string;
+};
+
 export const MAP_MARKER_TYPES = ["village", "north_spawn", "south_spawn", "house"] as const;
 
 export type MapMarkerType = (typeof MAP_MARKER_TYPES)[number];
@@ -73,4 +87,5 @@ export type GameState = {
   defaultMapCenter?: MapCenter;
   mapMarkers?: MapMarker[];
   mapShapes?: MapShape[];
+  mapSignals?: MapSignal[];
 };

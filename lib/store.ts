@@ -1,5 +1,6 @@
 import "server-only";
 import { isMapMarkerType, normalizeMarkerColor, MAP_MARKER_META } from "./map-markers";
+import { isMapSignalType } from "./map-signals";
 import { normalizeGameCode } from "./game-code";
 import { GameState } from "./types";
 
@@ -29,7 +30,8 @@ function createInitialState(): GameState {
     completions: [],
     defaultMapCenter: undefined,
     mapMarkers: [],
-    mapShapes: []
+    mapShapes: [],
+    mapSignals: []
   };
 }
 
@@ -158,13 +160,48 @@ function normalizeState(value: unknown): GameState {
           };
         })
     : [];
+  const nowMs = Date.now();
+  const mapSignals = Array.isArray(candidate.mapSignals)
+    ? candidate.mapSignals
+        .filter(
+          (signal) =>
+            signal &&
+            typeof signal === "object" &&
+            typeof signal.id === "string" &&
+            typeof signal.type === "string" &&
+            isMapSignalType(signal.type) &&
+            (signal.team === "red" || signal.team === "blue") &&
+            Number.isFinite(signal.lat) &&
+            Number.isFinite(signal.lng)
+        )
+        .map((signal) => {
+          const expiresAtMs = Date.parse(
+            typeof signal.expiresAt === "string" ? signal.expiresAt : new Date(0).toISOString()
+          );
+
+          return {
+            id: signal.id,
+            type: signal.type,
+            team: signal.team,
+            lat: Number(signal.lat),
+            lng: Number(signal.lng),
+            createdAt: typeof signal.createdAt === "string" ? signal.createdAt : new Date().toISOString(),
+            expiresAt:
+              Number.isFinite(expiresAtMs) && expiresAtMs > nowMs
+                ? new Date(expiresAtMs).toISOString()
+                : new Date(0).toISOString()
+          };
+        })
+        .filter((signal) => Date.parse(signal.expiresAt) > nowMs)
+    : [];
 
   return {
     missions: Array.isArray(candidate.missions) ? candidate.missions : [],
     completions: Array.isArray(candidate.completions) ? candidate.completions : [],
     defaultMapCenter,
     mapMarkers,
-    mapShapes
+    mapShapes,
+    mapSignals
   };
 }
 
