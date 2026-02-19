@@ -15,27 +15,26 @@ export async function DELETE(
   }
 
   const params = await context.params;
-  const missionId = params.id;
+  const markerId = params.id;
 
   try {
     const state = await updateState((current) => {
-      const exists = current.missions.some((mission) => mission.id === missionId);
+      const exists = (current.mapMarkers ?? []).some((marker) => marker.id === markerId);
       if (!exists) {
-        throw new Error("Mission not found");
+        throw new Error("Marker not found");
       }
 
       return {
         ...current,
-        missions: current.missions.filter((mission) => mission.id !== missionId),
-        completions: current.completions.filter((completion) => completion.missionId !== missionId)
+        mapMarkers: (current.mapMarkers ?? []).filter((marker) => marker.id !== markerId)
       };
     });
 
-    broadcastState({ type: "mission_deleted", state });
+    broadcastState({ type: "sync", state });
     return NextResponse.json({ ok: true, state });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not delete mission" },
+      { error: error instanceof Error ? error.message : "Could not delete marker" },
       { status: 400 }
     );
   }

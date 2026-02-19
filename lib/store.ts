@@ -1,9 +1,13 @@
 import "server-only";
+import { isMapMarkerType, normalizeMarkerColor, MAP_MARKER_META } from "./map-markers";
 import { GameState } from "./types";
 
 const INITIAL_STATE: GameState = {
   missions: [],
-  completions: []
+  completions: [],
+  defaultMapCenter: undefined,
+  mapMarkers: [],
+  mapShapes: []
 };
 
 const GAME_STATE_ID = 1;
@@ -55,9 +59,97 @@ function normalizeState(value: unknown): GameState {
   }
 
   const candidate = value as Partial<GameState>;
+  const defaultMapCenter =
+    candidate.defaultMapCenter &&
+    Number.isFinite(candidate.defaultMapCenter.lat) &&
+    Number.isFinite(candidate.defaultMapCenter.lng)
+      ? {
+          lat: Number(candidate.defaultMapCenter.lat),
+          lng: Number(candidate.defaultMapCenter.lng)
+        }
+      : undefined;
+  const mapMarkers = Array.isArray(candidate.mapMarkers)
+    ? candidate.mapMarkers
+        .filter(
+          (marker) =>
+            marker &&
+            typeof marker === "object" &&
+            typeof marker.id === "string" &&
+            Number.isFinite(marker.lat) &&
+            Number.isFinite(marker.lng)
+        )
+        .map((marker) => {
+          const markerType =
+            typeof marker.type === "string" && isMapMarkerType(marker.type) ? marker.type : undefined;
+          const fallback = markerType ? MAP_MARKER_META[markerType] : null;
+          const name =
+            typeof marker.name === "string" && marker.name.trim().length > 0
+              ? marker.name.trim()
+              : fallback?.label ?? "Marker";
+          const color =
+            typeof marker.color === "string" ? normalizeMarkerColor(marker.color) : null;
+
+          return {
+            id: marker.id,
+            type: markerType,
+            name,
+            color: color ?? fallback?.color ?? "#5f676c",
+            lat: Number(marker.lat),
+            lng: Number(marker.lng),
+            createdAt: typeof marker.createdAt === "string" ? marker.createdAt : new Date().toISOString()
+          };
+        })
+    : [];
+  const mapShapes = Array.isArray(candidate.mapShapes)
+    ? candidate.mapShapes
+        .filter(
+          (shape) =>
+            shape &&
+            typeof shape === "object" &&
+            typeof shape.id === "string" &&
+            Array.isArray(shape.points)
+        )
+        .map((shape) => {
+          const points = shape.points
+            .filter(
+              (point) =>
+                point &&
+                typeof point === "object" &&
+                Number.isFinite(point.lat) &&
+                Number.isFinite(point.lng)
+            )
+            .map((point) => ({
+              lat: Number(point.lat),
+              lng: Number(point.lng)
+            }));
+          const normalizedOpacity =
+            typeof shape.opacity === "number" && Number.isFinite(shape.opacity)
+              ? Math.min(1, Math.max(0, shape.opacity))
+              : 0.35;
+          const normalizedColor =
+            typeof shape.color === "string" ? normalizeMarkerColor(shape.color) : null;
+          const label =
+            typeof shape.label === "string" && shape.label.trim().length > 0
+              ? shape.label.trim()
+              : "Shape";
+
+          return {
+            id: shape.id,
+            label,
+            color: normalizedColor ?? "#5f676c",
+            opacity: normalizedOpacity,
+            points,
+            createdAt: typeof shape.createdAt === "string" ? shape.createdAt : new Date().toISOString()
+          };
+        })
+    : [];
+
   return {
     missions: Array.isArray(candidate.missions) ? candidate.missions : [],
-    completions: Array.isArray(candidate.completions) ? candidate.completions : []
+    completions: Array.isArray(candidate.completions) ? candidate.completions : [],
+    defaultMapCenter,
+    mapMarkers,
+    mapShapes
   };
 }
 
