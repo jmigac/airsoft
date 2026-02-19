@@ -14,7 +14,10 @@ const MissionMap = dynamic(() => import("./MissionMap"), {
 
 const INITIAL_STATE: GameState = {
   missions: [],
-  completions: []
+  completions: [],
+  defaultMapCenter: undefined,
+  mapMarkers: [],
+  mapShapes: []
 };
 
 export default function QuestApp() {
@@ -105,6 +108,17 @@ export default function QuestApp() {
     [redeemCountsByTeam]
   );
 
+  const defaultMapCenter = useMemo(
+    () =>
+      state.defaultMapCenter
+        ? {
+            lat: state.defaultMapCenter.lat,
+            lng: state.defaultMapCenter.lng
+          }
+        : null,
+    [state.defaultMapCenter?.lat, state.defaultMapCenter?.lng]
+  );
+
   const setSelectedTeam = (nextTeam: Team) => {
     setTeam(nextTeam);
     localStorage.setItem("team", nextTeam);
@@ -172,14 +186,14 @@ export default function QuestApp() {
               <button
                 key={candidate}
                 type="button"
-                className={team === candidate ? "team-btn active" : "team-btn"}
+                className={`team-btn team-btn-${candidate} ${team === candidate ? "active" : ""}`}
                 onClick={() => setSelectedTeam(candidate)}
               >
                 {candidate.toUpperCase()}
               </button>
             ))}
           </div>
-          {!team && <p className="muted">Choose a team before entering quest payload.</p>}
+          {!team && <p className="muted">Click on Team Participation (RED or BLUE) before entering quest payload.</p>}
         </section>
 
         <section className="panel">
@@ -216,11 +230,22 @@ export default function QuestApp() {
         </section>
 
         <section className="map-panel">
-          <MissionMap
-            missions={state.missions}
-            completions={state.completions}
-            selectedTeam={team || null}
-          />
+          {!team && (
+            <div className="map-team-gate">
+              <h3>Select Team Participation</h3>
+              <p>Click on Team Participation button (RED or BLUE) to unlock the map.</p>
+            </div>
+          )}
+          {team && (
+            <MissionMap
+              missions={state.missions}
+              completions={state.completions}
+              mapMarkers={state.mapMarkers ?? []}
+              mapShapes={state.mapShapes ?? []}
+              selectedTeam={team}
+              defaultCenter={defaultMapCenter}
+            />
+          )}
         </section>
       </main>
 

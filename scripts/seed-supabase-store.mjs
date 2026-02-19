@@ -9,6 +9,26 @@ const SUPABASE_URL = (process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABA
 );
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const GAME_STATE_ID = 1;
+const MAP_MARKER_TYPES = new Set(["village", "north_spawn", "south_spawn", "house"]);
+const MAP_MARKER_META = {
+  village: { label: "Village", color: "#f0a020" },
+  north_spawn: { label: "North Spawn", color: "#1f5ecf" },
+  south_spawn: { label: "South Spawn", color: "#2ca34a" },
+  house: { label: "House", color: "#7c4a2a" }
+};
+
+function normalizeMarkerColor(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!/^#[0-9a-fA-F]{6}$/.test(trimmed)) {
+    return null;
+  }
+
+  return trimmed.toLowerCase();
+}
 
 function assertEnv() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -39,12 +59,92 @@ function buildUrl(pathname, params = new URLSearchParams()) {
 
 function normalizeState(input) {
   if (!input || typeof input !== "object") {
-    return { missions: [], completions: [] };
+    return { missions: [], completions: [], defaultMapCenter: undefined, mapMarkers: [], mapShapes: [] };
   }
+
+  const defaultMapCenter =
+    input.defaultMapCenter &&
+    Number.isFinite(input.defaultMapCenter.lat) &&
+    Number.isFinite(input.defaultMapCenter.lng)
+      ? {
+          lat: Number(input.defaultMapCenter.lat),
+          lng: Number(input.defaultMapCenter.lng)
+        }
+      : undefined;
+
+  const mapMarkers = Array.isArray(input.mapMarkers)
+    ? input.mapMarkers
+        .filter(
+          (marker) =>
+            marker &&
+            typeof marker === "object" &&
+            typeof marker.id === "string" &&
+            Number.isFinite(marker.lat) &&
+            Number.isFinite(marker.lng)
+        )
+        .map((marker) => ({
+          type: MAP_MARKER_TYPES.has(marker.type) ? marker.type : undefined,
+          id: marker.id,
+          name:
+            typeof marker.name === "string" && marker.name.trim().length > 0
+              ? marker.name.trim()
+              : MAP_MARKER_TYPES.has(marker.type)
+                ? MAP_MARKER_META[marker.type].label
+                : "Marker",
+          color:
+            normalizeMarkerColor(marker.color) ??
+            (MAP_MARKER_TYPES.has(marker.type) ? MAP_MARKER_META[marker.type].color : "#5f676c"),
+          lat: Number(marker.lat),
+          lng: Number(marker.lng),
+          createdAt: typeof marker.createdAt === "string" ? marker.createdAt : new Date().toISOString()
+        }))
+    : [];
+  const mapShapes = Array.isArray(input.mapShapes)
+    ? input.mapShapes
+        .filter(
+          (shape) =>
+            shape &&
+            typeof shape === "object" &&
+            typeof shape.id === "string" &&
+            Array.isArray(shape.points)
+        )
+        .map((shape) => {
+          const points = shape.points
+            .filter(
+              (point) =>
+                point &&
+                typeof point === "object" &&
+                Number.isFinite(point.lat) &&
+                Number.isFinite(point.lng)
+            )
+            .map((point) => ({
+              lat: Number(point.lat),
+              lng: Number(point.lng)
+            }));
+
+          return {
+            id: shape.id,
+            label:
+              typeof shape.label === "string" && shape.label.trim().length > 0
+                ? shape.label.trim()
+                : "Shape",
+            color: normalizeMarkerColor(shape.color) ?? "#5f676c",
+            opacity:
+              typeof shape.opacity === "number" && Number.isFinite(shape.opacity)
+                ? Math.min(1, Math.max(0, shape.opacity))
+                : 0.35,
+            points,
+            createdAt: typeof shape.createdAt === "string" ? shape.createdAt : new Date().toISOString()
+          };
+        })
+    : [];
 
   return {
     missions: Array.isArray(input.missions) ? input.missions : [],
-    completions: Array.isArray(input.completions) ? input.completions : []
+    completions: Array.isArray(input.completions) ? input.completions : [],
+    defaultMapCenter,
+    mapMarkers,
+    mapShapes
   };
 }
 
@@ -70,7 +170,7 @@ async function ensureRow() {
     body: JSON.stringify([
       {
         id: GAME_STATE_ID,
-        state: { missions: [], completions: [] },
+        state: { missions: [], completions: [], defaultMapCenter: undefined, mapMarkers: [], mapShapes: [] },
         version: 1
       }
     ])

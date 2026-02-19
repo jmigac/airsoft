@@ -15,27 +15,26 @@ export async function DELETE(
   }
 
   const params = await context.params;
-  const missionId = params.id;
+  const shapeId = params.id;
 
   try {
     const state = await updateState((current) => {
-      const exists = current.missions.some((mission) => mission.id === missionId);
+      const exists = (current.mapShapes ?? []).some((shape) => shape.id === shapeId);
       if (!exists) {
-        throw new Error("Mission not found");
+        throw new Error("Shape not found");
       }
 
       return {
         ...current,
-        missions: current.missions.filter((mission) => mission.id !== missionId),
-        completions: current.completions.filter((completion) => completion.missionId !== missionId)
+        mapShapes: (current.mapShapes ?? []).filter((shape) => shape.id !== shapeId)
       };
     });
 
-    broadcastState({ type: "mission_deleted", state });
+    broadcastState({ type: "sync", state });
     return NextResponse.json({ ok: true, state });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not delete mission" },
+      { error: error instanceof Error ? error.message : "Could not delete shape" },
       { status: 400 }
     );
   }

@@ -9,6 +9,41 @@ export type MissionLocation = {
   radius: number;
 };
 
+export type MapCenter = {
+  lat: number;
+  lng: number;
+};
+
+export const MAP_MARKER_TYPES = ["village", "north_spawn", "south_spawn", "house"] as const;
+
+export type MapMarkerType = (typeof MAP_MARKER_TYPES)[number];
+
+export type MapMarker = {
+  id: string;
+  type?: MapMarkerType;
+  name: string;
+  color: string;
+  lat: number;
+  lng: number;
+  createdAt: string;
+};
+
+export type MapShape = {
+  id: string;
+  label: string;
+  color: string;
+  opacity: number;
+  points: MapCenter[];
+  createdAt: string;
+};
+
+export type MapShapeDraft = {
+  label: string;
+  color: string;
+  opacity: number;
+  points: MapCenter[];
+};
+
 export type MissionTimeWindowCET = {
   startsAtCET: string;
   endsAtCET: string;
@@ -18,10 +53,7 @@ export type Mission = {
   id: string;
   name: string;
   qrCode: string;
-  mapCenter?: {
-    lat: number;
-    lng: number;
-  };
+  mapCenter?: MapCenter;
   timeWindowCET?: MissionTimeWindowCET;
   locations: MissionLocation[];
   createdAt: string;
@@ -38,4 +70,7 @@ export type Completion = {
 export type GameState = {
   missions: Mission[];
   completions: Completion[];
+  defaultMapCenter?: MapCenter;
+  mapMarkers?: MapMarker[];
+  mapShapes?: MapShape[];
 };

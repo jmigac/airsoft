@@ -10,6 +10,28 @@ When creating a mission in Admin, you can optionally enable a CET time window.
 - Outside that range, redemption returns a clear error message that the mission is time-critical.
 - After the window expires, the mission is shown as failed on the map (red circle with red `X`).
 
+## Default visitor map start
+
+In Admin Panel, you can set a global playfield start position (lat/lng).
+
+- New visitors start on that map position by default.
+- You can pick the point directly from the map click picker.
+
+## Tactical map icons
+
+Admin can place persistent military markers on the map and remove them later from Admin Panel.
+
+- Available presets: `Village`, `North Spawn`, `South Spawn`, `House`
+- For each marker you can set custom name text (shown inside marker) and custom color.
+
+## Map shapes
+
+Admin can draw polygon overlays by picking multiple points on the map, then setting:
+
+- Label text
+- Color
+- Transparency (`0` to `1`)
+
 ## Supabase persistence setup
 
 This app now stores game state in Supabase instead of local files.

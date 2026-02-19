@@ -2,9 +2,9 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AdminPanel, { MissionPayload } from "@/app/components/AdminPanel";
-import { GameState } from "@/lib/types";
+import { GameState, MapShapeDraft } from "@/lib/types";
 
 const MissionMap = dynamic(() => import("@/app/components/MissionMap"), {
   ssr: false,
@@ -13,7 +13,10 @@ const MissionMap = dynamic(() => import("@/app/components/MissionMap"), {
 
 const INITIAL_STATE: GameState = {
   missions: [],
-  completions: []
+  completions: [],
+  defaultMapCenter: undefined,
+  mapMarkers: [],
+  mapShapes: []
 };
 
 export default function AdminPage() {
@@ -23,6 +26,17 @@ export default function AdminPage() {
   const [pendingMapPoint, setPendingMapPoint] = useState<{ lat: number; lng: number } | null>(null);
   const [mapPickMode, setMapPickMode] = useState(false);
   const [mapCenterOverride, setMapCenterOverride] = useState<{ lat: number; lng: number } | null>(null);
+  const [draftShape, setDraftShape] = useState<MapShapeDraft | null>(null);
+  const defaultMapCenter = useMemo(
+    () =>
+      state.defaultMapCenter
+        ? {
+            lat: state.defaultMapCenter.lat,
+            lng: state.defaultMapCenter.lng
+          }
+        : null,
+    [state.defaultMapCenter?.lat, state.defaultMapCenter?.lng]
+  );
 
   useEffect(() => {
     const load = async () => {
@@ -91,6 +105,7 @@ export default function AdminPage() {
     await fetch("/api/admin/logout", { method: "POST" });
     setIsAdmin(false);
     setMapPickMode(false);
+    setDraftShape(null);
   };
 
   const createMission = async (mission: MissionPayload) => {
@@ -127,6 +142,95 @@ export default function AdminPage() {
     }
   };
 
+  const createMapMarker = async (payload: { type?: string; name: string; color: string; lat: number; lng: number }) => {
+    const response = await fetch("/api/admin/markers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.error ?? "Failed to create marker");
+    }
+
+    if (body.state) {
+      setState(body.state);
+    }
+  };
+
+  const deleteMapMarker = async (markerId: string) => {
+    const response = await fetch(`/api/admin/markers/${markerId}`, {
+      method: "DELETE"
+    });
+
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.error ?? "Failed to delete marker");
+    }
+
+    if (body.state) {
+      setState(body.state);
+    }
+  };
+
+  const createMapShape = async (payload: {
+    label: string;
+    color: string;
+    opacity: number;
+    points: Array<{ lat: number; lng: number }>;
+  }) => {
+    const response = await fetch("/api/admin/shapes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.error ?? "Failed to create shape");
+    }
+
+    if (body.state) {
+      setState(body.state);
+    }
+  };
+
+  const deleteMapShape = async (shapeId: string) => {
+    const response = await fetch(`/api/admin/shapes/${shapeId}`, {
+      method: "DELETE"
+    });
+
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.error ?? "Failed to delete shape");
+    }
+
+    if (body.state) {
+      setState(body.state);
+    }
+  };
+
+  const updateDefaultMapCenter = async (center: { lat: number; lng: number } | null) => {
+    const response = await fetch("/api/admin/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultMapCenter: center })
+    });
+
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Failed to update default map center");
+    }
+
+    if (payload.state) {
+      setState(payload.state);
+    }
+
+    setMapCenterOverride(center);
+  };
+
   return (
     <div className="admin-shell">
       <header className="admin-topbar">
@@ -143,24 +247,37 @@ export default function AdminPage() {
           <MissionMap
             missions={state.missions}
             completions={state.completions}
+            mapMarkers={state.mapMarkers ?? []}
+            mapShapes={state.mapShapes ?? []}
             selectedTeam={null}
             mapPickMode={mapPickMode}
             onMapClick={(point) => setPendingMapPoint(point)}
+            defaultCenter={defaultMapCenter}
             centerOverride={mapCenterOverride}
+            draftShape={draftShape}
           />
         </section>
 
         <AdminPanel
           isAdmin={isAdmin}
           missions={state.missions}
+          mapMarkers={state.mapMarkers ?? []}
+          mapShapes={state.mapShapes ?? []}
+          defaultMapCenter={defaultMapCenter}
           mapPickMode={mapPickMode}
           pendingMapPoint={pendingMapPoint}
           onMapPickModeChange={setMapPickMode}
           onLogin={loginAsAdmin}
           onLogout={logoutAdmin}
+          onUpdateDefaultMapCenter={updateDefaultMapCenter}
+          onCreateMapMarker={createMapMarker}
+          onDeleteMapMarker={deleteMapMarker}
+          onCreateMapShape={createMapShape}
+          onDeleteMapShape={deleteMapShape}
           onCreateMission={createMission}
           onDeleteMission={deleteMission}
           onFocusMissionMap={setMapCenterOverride}
+          onShapeDraftChange={setDraftShape}
         />
       </div>
     </div>
