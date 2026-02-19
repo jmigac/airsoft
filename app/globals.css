@@ -549,16 +549,40 @@ ul {
 @media (max-width: 1024px) {
   .app-shell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
   }
 
   .sidebar {
     border-right: 0;
-    border-bottom: 1px solid var(--line);
-    max-height: 45vh;
+    border-top: 1px solid var(--line);
+    border-bottom: 0;
+    max-height: none;
+    order: 2;
+    width: min(100%, 900px);
+    margin: 0 auto 0.9rem;
+    padding: 0.75rem;
   }
 
   .main-panel {
-    min-height: 55vh;
+    order: 1;
+    width: min(100%, 900px);
+    margin: 0 auto;
+    min-height: 0;
+    padding: 0.75rem;
+    gap: 0.65rem;
+    grid-template-rows: auto minmax(62vh, 1fr);
+  }
+
+  .entry-panel {
+    max-height: none;
+  }
+
+  .entry-panel button {
+    width: 100%;
+  }
+
+  .map-panel {
+    min-height: 62vh;
   }
 
   .location-grid {
@@ -580,5 +604,20 @@ ul {
   .admin-map-panel {
     height: 50vh;
     min-height: 320px;
+  }
+}
+
+@media (max-width: 640px) {
+  .main-panel {
+    padding: 0.6rem;
+    grid-template-rows: auto minmax(66vh, 1fr);
+  }
+
+  .map-panel {
+    min-height: 66vh;
+  }
+
+  .map-team-gate {
+    min-height: 300px;
   }
 }
