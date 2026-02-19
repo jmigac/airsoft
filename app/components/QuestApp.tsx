@@ -4,9 +4,10 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import QuestCodeModal from "./QuestCodeModal";
+import { clearGameCodeCookie, readGameCodeCookie, writeGameCodeCookie } from "@/lib/game-cookie";
 import { normalizeGameCode, sanitizeGameCode } from "@/lib/game-code";
 import { sanitizeQuestPayload } from "@/lib/payload";
-import { GameState, TEAMS, Team } from "@/lib/types";
+import { GameState, MapSignalType, TEAMS, Team } from "@/lib/types";
 
 const MissionMap = dynamic(() => import("./MissionMap"), {
   ssr: false,
@@ -18,7 +19,8 @@ const INITIAL_STATE: GameState = {
   completions: [],
   defaultMapCenter: undefined,
   mapMarkers: [],
-  mapShapes: []
+  mapShapes: [],
+  mapSignals: []
 };
 
 export default function QuestApp() {
@@ -40,9 +42,8 @@ export default function QuestApp() {
       const search = new URLSearchParams(window.location.search);
       return normalizeGameCode(search.get("game"));
     })();
-    const fromStorage =
-      typeof window !== "undefined" ? normalizeGameCode(localStorage.getItem("game_code")) : null;
-    const initialGameCode = fromUrl ?? fromStorage;
+    const fromCookie = readGameCodeCookie();
+    const initialGameCode = fromUrl ?? fromCookie;
 
     if (!initialGameCode) {
       return;
@@ -50,7 +51,7 @@ export default function QuestApp() {
 
     setGameCode(initialGameCode);
     setGameInput(initialGameCode);
-    localStorage.setItem("game_code", initialGameCode);
+    writeGameCodeCookie(initialGameCode);
   }, []);
 
   useEffect(() => {
@@ -92,7 +93,7 @@ export default function QuestApp() {
         if (!cancelled) {
           setError(loadError instanceof Error ? loadError.message : "Failed to load game.");
           setGameCode(null);
-          localStorage.removeItem("game_code");
+          clearGameCodeCookie();
           if (typeof window !== "undefined") {
             window.history.replaceState(null, "", "/");
           }
@@ -193,7 +194,7 @@ export default function QuestApp() {
     setGameCode(nextCode);
     setState(INITIAL_STATE);
     setError(null);
-    localStorage.setItem("game_code", nextCode);
+    writeGameCodeCookie(nextCode);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", `/?game=${encodeURIComponent(nextCode)}`);
     }
@@ -256,7 +257,7 @@ export default function QuestApp() {
     setTeam("");
     setState(INITIAL_STATE);
     setError(null);
-    localStorage.removeItem("game_code");
+    clearGameCodeCookie();
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", "/");
     }
@@ -320,6 +321,39 @@ export default function QuestApp() {
     setError(null);
   };
 
+  const createQuickSignal = async (payload: { type: MapSignalType; lat: number; lng: number }) => {
+    if (!gameCode) {
+      throw new Error("Join a game first.");
+    }
+
+    if (!team) {
+      throw new Error("Select team first.");
+    }
+
+    const response = await fetch(`/api/signals?game=${encodeURIComponent(gameCode)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        team,
+        type: payload.type,
+        lat: payload.lat,
+        lng: payload.lng
+      })
+    });
+    const responsePayload = (await response.json().catch(() => ({}))) as { error?: string; state?: GameState };
+
+    if (!response.ok) {
+      const message = responsePayload.error ?? "Could not place signal.";
+      setError(message);
+      throw new Error(message);
+    }
+
+    if (responsePayload.state) {
+      setState(responsePayload.state);
+    }
+    setError(null);
+  };
+
   if (!gameCode) {
     return (
       <main className="landing-shell">
@@ -328,6 +362,8 @@ export default function QuestApp() {
           <p className="muted">Join an existing game with invite code or create your own game.</p>
 
           <input
+            id="game-invite-code"
+            name="game_invite_code"
             type="text"
             placeholder="Invite code (e.g. A7C4KQ)"
             value={gameInput}
@@ -339,7 +375,7 @@ export default function QuestApp() {
             <button type="button" onClick={() => void joinGame()} disabled={busy}>
               {busy ? "Please wait..." : "Join Existing Game"}
             </button>
-            <button type="button" onClick={() => void createNewGame()} disabled={busy}>
+            <button type="button" onClick={() => void createNewGame()} disabled>
               {busy ? "Please wait..." : "Create New Game"}
             </button>
           </div>
@@ -461,8 +497,10 @@ export default function QuestApp() {
               completions={state.completions}
               mapMarkers={state.mapMarkers ?? []}
               mapShapes={state.mapShapes ?? []}
+              mapSignals={state.mapSignals ?? []}
               selectedTeam={team}
               defaultCenter={defaultMapCenter}
+              onCreateQuickSignal={createQuickSignal}
             />
           )}
         </section>

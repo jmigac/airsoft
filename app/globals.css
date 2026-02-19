@@ -245,6 +245,104 @@ ul {
   font-weight: 800;
 }
 
+.quick-signal-marker-wrapper {
+  background: transparent;
+  border: 0;
+}
+
+.quick-signal-badge {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.quick-signal-red {
+  outline: 2px solid #7f1d1d;
+}
+
+.quick-signal-blue {
+  outline: 2px solid #1d3f7f;
+}
+
+.map-root.signal-picker-open .leaflet-control-zoom {
+  display: none;
+}
+
+.map-signal-radial {
+  position: absolute;
+  z-index: 520;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.map-signal-center-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #fff;
+  border: 2px solid #111;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+.map-signal-radial-option {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(0, 0);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.44rem;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
+}
+
+.map-signal-radial-option.active {
+  background: #fffdf8;
+  border-width: 3px;
+}
+
+.map-signal-radial-badge {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.map-signal-gesture-hint {
+  position: absolute;
+  z-index: 510;
+  right: 12px;
+  bottom: 12px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.28rem 0.45rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  pointer-events: none;
+}
+
 .mission-failed-x {
   color: #cc2f2f;
   font-size: 1.05rem;

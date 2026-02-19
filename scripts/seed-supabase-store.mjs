@@ -73,7 +73,14 @@ function buildUrl(pathname, params = new URLSearchParams()) {
 
 function normalizeState(input) {
   if (!input || typeof input !== "object") {
-    return { missions: [], completions: [], defaultMapCenter: undefined, mapMarkers: [], mapShapes: [] };
+    return {
+      missions: [],
+      completions: [],
+      defaultMapCenter: undefined,
+      mapMarkers: [],
+      mapShapes: [],
+      mapSignals: []
+    };
   }
 
   const defaultMapCenter =
@@ -152,13 +159,47 @@ function normalizeState(input) {
           };
         })
     : [];
+  const nowMs = Date.now();
+  const mapSignals = Array.isArray(input.mapSignals)
+    ? input.mapSignals
+        .filter(
+          (signal) =>
+            signal &&
+            typeof signal === "object" &&
+            typeof signal.id === "string" &&
+            (signal.type === "info" || signal.type === "danger" || signal.type === "intel") &&
+            (signal.team === "red" || signal.team === "blue") &&
+            Number.isFinite(signal.lat) &&
+            Number.isFinite(signal.lng)
+        )
+        .map((signal) => {
+          const expiresAtMs = Date.parse(
+            typeof signal.expiresAt === "string" ? signal.expiresAt : new Date(0).toISOString()
+          );
+
+          return {
+            id: signal.id,
+            type: signal.type,
+            team: signal.team,
+            lat: Number(signal.lat),
+            lng: Number(signal.lng),
+            createdAt: typeof signal.createdAt === "string" ? signal.createdAt : new Date().toISOString(),
+            expiresAt:
+              Number.isFinite(expiresAtMs) && expiresAtMs > nowMs
+                ? new Date(expiresAtMs).toISOString()
+                : new Date(0).toISOString()
+          };
+        })
+        .filter((signal) => Date.parse(signal.expiresAt) > nowMs)
+    : [];
 
   return {
     missions: Array.isArray(input.missions) ? input.missions : [],
     completions: Array.isArray(input.completions) ? input.completions : [],
     defaultMapCenter,
     mapMarkers,
-    mapShapes
+    mapShapes,
+    mapSignals
   };
 }
 
