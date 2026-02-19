@@ -2,6 +2,13 @@
 
 Online Airsoft Quest tracker with maps integration.
 
+## Multi-game invite flow
+
+- Landing page now supports `Join Existing Game` and `Create New Game`.
+- Each game has its own invite code (`6` alphanumeric chars).
+- Missions, completions, default map center, tactical icons and map shapes are isolated per game.
+- Admin login/session is scoped to the selected game code.
+
 ## Time-critical missions (CET)
 
 When creating a mission in Admin, you can optionally enable a CET time window.
@@ -66,6 +73,12 @@ Or provide a custom source file:
 
 ```bash
 node scripts/seed-supabase-store.mjs ./path/to/store.json
+```
+
+You can also provide explicit invite code for seeded data:
+
+```bash
+node scripts/seed-supabase-store.mjs ./path/to/store.json A1B2C3
 ```
 
 ### 4. Deploy

@@ -1,26 +1,41 @@
 import "server-only";
 import { isMapMarkerType, normalizeMarkerColor, MAP_MARKER_META } from "./map-markers";
+import { normalizeGameCode } from "./game-code";
 import { GameState } from "./types";
-
-const INITIAL_STATE: GameState = {
-  missions: [],
-  completions: [],
-  defaultMapCenter: undefined,
-  mapMarkers: [],
-  mapShapes: []
-};
 
 const GAME_STATE_ID = 1;
 const MAX_UPDATE_RETRIES = 8;
+const STORE_SCHEMA_VERSION = 2;
+export const LEGACY_GAME_CODE = "LEGACY1";
 const SUPABASE_URL = (process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(
   /\/+$/,
   ""
 );
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
-type GameStateRow = {
-  state: GameState;
+type PersistedGameStore = {
+  schemaVersion: number;
+  games: Record<string, GameState>;
+};
+
+type StoreRow = {
+  store: PersistedGameStore;
   version: number;
+};
+
+function createInitialState(): GameState {
+  return {
+    missions: [],
+    completions: [],
+    defaultMapCenter: undefined,
+    mapMarkers: [],
+    mapShapes: []
+  };
+}
+
+const INITIAL_STORE: PersistedGameStore = {
+  schemaVersion: STORE_SCHEMA_VERSION,
+  games: {}
 };
 
 function assertSupabaseConfig() {
@@ -55,7 +70,7 @@ function buildHeaders(prefer?: string) {
 
 function normalizeState(value: unknown): GameState {
   if (!value || typeof value !== "object") {
-    return INITIAL_STATE;
+    return createInitialState();
   }
 
   const candidate = value as Partial<GameState>;
@@ -153,6 +168,53 @@ function normalizeState(value: unknown): GameState {
   };
 }
 
+function looksLikeLegacySingleGameState(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<GameState>;
+  return Array.isArray(candidate.missions) || Array.isArray(candidate.completions);
+}
+
+function normalizeStore(value: unknown): PersistedGameStore {
+  if (!value || typeof value !== "object") {
+    return INITIAL_STORE;
+  }
+
+  const candidate = value as { schemaVersion?: unknown; games?: unknown };
+  if (candidate.games && typeof candidate.games === "object") {
+    const normalizedGames: Record<string, GameState> = {};
+
+    for (const [rawCode, rawState] of Object.entries(candidate.games as Record<string, unknown>)) {
+      const gameCode = normalizeGameCode(rawCode);
+      if (!gameCode) {
+        continue;
+      }
+      normalizedGames[gameCode] = normalizeState(rawState);
+    }
+
+    return {
+      schemaVersion:
+        typeof candidate.schemaVersion === "number" && Number.isFinite(candidate.schemaVersion)
+          ? candidate.schemaVersion
+          : STORE_SCHEMA_VERSION,
+      games: normalizedGames
+    };
+  }
+
+  if (looksLikeLegacySingleGameState(value)) {
+    return {
+      schemaVersion: STORE_SCHEMA_VERSION,
+      games: {
+        [LEGACY_GAME_CODE]: normalizeState(value)
+      }
+    };
+  }
+
+  return INITIAL_STORE;
+}
+
 async function parseResponseError(response: Response) {
   const fallback = `${response.status} ${response.statusText}`;
   const raw = await response.text();
@@ -187,7 +249,7 @@ async function requestJson<T>(input: string, init: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function selectStateRow(): Promise<GameStateRow | null> {
+async function selectStateRow(): Promise<StoreRow | null> {
   const search = new URLSearchParams({
     select: "state,version",
     id: `eq.${GAME_STATE_ID}`,
@@ -207,12 +269,12 @@ async function selectStateRow(): Promise<GameStateRow | null> {
 
   const row = rows[0];
   return {
-    state: normalizeState(row.state),
+    store: normalizeStore(row.state),
     version: Number.isFinite(row.version) ? row.version : 1
   };
 }
 
-async function ensureStateRow(): Promise<GameStateRow> {
+async function ensureStateRow(): Promise<StoreRow> {
   const existing = await selectStateRow();
   if (existing) {
     return existing;
@@ -231,7 +293,7 @@ async function ensureStateRow(): Promise<GameStateRow> {
       body: JSON.stringify([
         {
           id: GAME_STATE_ID,
-          state: INITIAL_STATE,
+          state: INITIAL_STORE,
           version: 1
         }
       ])
@@ -246,41 +308,12 @@ async function ensureStateRow(): Promise<GameStateRow> {
   return created;
 }
 
-export async function readState(): Promise<GameState> {
-  const row = await ensureStateRow();
-  return row.state;
-}
-
-export async function writeState(state: GameState): Promise<void> {
-  await ensureStateRow();
-
-  const search = new URLSearchParams({
-    select: "state",
-    id: `eq.${GAME_STATE_ID}`
-  });
-
-  const rows = await requestJson<Array<{ state: unknown }>>(
-    buildUrl("/rest/v1/game_state", search),
-    {
-      method: "PATCH",
-      headers: buildHeaders("return=representation"),
-      body: JSON.stringify({
-        state: normalizeState(state)
-      })
-    }
-  );
-
-  if (rows.length !== 1) {
-    throw new Error("Could not persist game state to Supabase.");
-  }
-}
-
-export async function updateState(
-  updater: (current: GameState) => GameState
-): Promise<GameState> {
+async function updateStore(
+  updater: (current: PersistedGameStore) => PersistedGameStore
+): Promise<PersistedGameStore> {
   for (let attempt = 1; attempt <= MAX_UPDATE_RETRIES; attempt += 1) {
     const current = await ensureStateRow();
-    const next = normalizeState(updater(current.state));
+    const next = normalizeStore(updater(current.store));
 
     const search = new URLSearchParams({
       select: "state,version",
@@ -301,9 +334,108 @@ export async function updateState(
     );
 
     if (rows.length === 1) {
-      return normalizeState(rows[0].state);
+      return normalizeStore(rows[0].state);
     }
   }
 
   throw new Error("Could not update game state due to concurrent writes. Please retry.");
+}
+
+export async function gameExists(gameCode: string): Promise<boolean> {
+  const normalizedGameCode = normalizeGameCode(gameCode);
+  if (!normalizedGameCode) {
+    return false;
+  }
+
+  const row = await ensureStateRow();
+  return Boolean(row.store.games[normalizedGameCode]);
+}
+
+export async function createGame(gameCode: string): Promise<GameState> {
+  const normalizedGameCode = normalizeGameCode(gameCode);
+  if (!normalizedGameCode) {
+    throw new Error("Invalid game code.");
+  }
+
+  const nextStore = await updateStore((current) => {
+    if (current.games[normalizedGameCode]) {
+      throw new Error("Game already exists.");
+    }
+
+    return {
+      ...current,
+      games: {
+        ...current.games,
+        [normalizedGameCode]: createInitialState()
+      }
+    };
+  });
+
+  const created = nextStore.games[normalizedGameCode];
+  if (!created) {
+    throw new Error("Could not initialize game.");
+  }
+
+  return created;
+}
+
+export async function readState(gameCode: string): Promise<GameState> {
+  const normalizedGameCode = normalizeGameCode(gameCode);
+  if (!normalizedGameCode) {
+    throw new Error("Invalid game code.");
+  }
+
+  const row = await ensureStateRow();
+  const state = row.store.games[normalizedGameCode];
+  if (!state) {
+    throw new Error("Game not found.");
+  }
+  return state;
+}
+
+export async function writeState(gameCode: string, state: GameState): Promise<void> {
+  const normalizedGameCode = normalizeGameCode(gameCode);
+  if (!normalizedGameCode) {
+    throw new Error("Invalid game code.");
+  }
+
+  await updateStore((current) => ({
+    ...current,
+    games: {
+      ...current.games,
+      [normalizedGameCode]: normalizeState(state)
+    }
+  }));
+}
+
+export async function updateState(
+  gameCode: string,
+  updater: (current: GameState) => GameState
+): Promise<GameState> {
+  const normalizedGameCode = normalizeGameCode(gameCode);
+  if (!normalizedGameCode) {
+    throw new Error("Invalid game code.");
+  }
+
+  const nextStore = await updateStore((current) => {
+    const previousState = current.games[normalizedGameCode];
+    if (!previousState) {
+      throw new Error("Game not found.");
+    }
+
+    return {
+      ...current,
+      games: {
+        ...current.games,
+        [normalizedGameCode]: normalizeState(updater(previousState))
+      }
+    };
+  });
+
+  const state = nextStore.games[normalizedGameCode];
+  if (!state) {
+    throw new Error("Game not found.");
+  }
+
+  return state;
 }

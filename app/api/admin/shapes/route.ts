@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requestIsAdmin } from "@/lib/admin-auth";
 import { broadcastState } from "@/lib/events";
+import { requireGameCodeFromRequest } from "@/lib/game-request";
 import { isValidMarkerColor, normalizeMarkerColor } from "@/lib/map-markers";
 import { updateState } from "@/lib/store";
 
@@ -15,7 +16,13 @@ type CreateShapePayload = {
 };
 
 export async function POST(request: NextRequest) {
-  if (!requestIsAdmin(request)) {
+  const game = requireGameCodeFromRequest(request);
+  if (!game.ok) {
+    return game.response;
+  }
+
+  const gameCode = game.gameCode;
+  if (!requestIsAdmin(request, gameCode)) {
     return NextResponse.json({ error: "Admin privileges required" }, { status: 401 });
   }
 
@@ -51,7 +58,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const state = await updateState((current) => ({
+    const state = await updateState(gameCode, (current) => ({
       ...current,
       mapShapes: [
         ...(current.mapShapes ?? []),
@@ -66,7 +73,7 @@ export async function POST(request: NextRequest) {
       ]
     }));
 
-    broadcastState({ type: "sync", state });
+    broadcastState({ gameCode, type: "sync", state });
     return NextResponse.json({ ok: true, state });
   } catch (error) {
     return NextResponse.json(

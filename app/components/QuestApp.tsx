@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import QuestCodeModal from "./QuestCodeModal";
+import { normalizeGameCode, sanitizeGameCode } from "@/lib/game-code";
 import { sanitizeQuestPayload } from "@/lib/payload";
 import { GameState, TEAMS, Team } from "@/lib/types";
 
@@ -23,39 +24,108 @@ const INITIAL_STATE: GameState = {
 export default function QuestApp() {
   const [state, setState] = useState<GameState>(INITIAL_STATE);
   const [team, setTeam] = useState<Team | "">("");
+  const [gameCode, setGameCode] = useState<string | null>(null);
+  const [gameInput, setGameInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [loadingGameState, setLoadingGameState] = useState(false);
 
   useEffect(() => {
-    const savedTeam = localStorage.getItem("team") as Team | null;
-    if (savedTeam && TEAMS.includes(savedTeam)) {
-      setTeam(savedTeam);
+    const fromUrl = (() => {
+      if (typeof window === "undefined") {
+        return null;
+      }
+
+      const search = new URLSearchParams(window.location.search);
+      return normalizeGameCode(search.get("game"));
+    })();
+    const fromStorage =
+      typeof window !== "undefined" ? normalizeGameCode(localStorage.getItem("game_code")) : null;
+    const initialGameCode = fromUrl ?? fromStorage;
+
+    if (!initialGameCode) {
+      return;
     }
 
+    setGameCode(initialGameCode);
+    setGameInput(initialGameCode);
+    localStorage.setItem("game_code", initialGameCode);
+  }, []);
+
+  useEffect(() => {
+    if (!gameCode) {
+      setTeam("");
+      return;
+    }
+
+    const savedTeam = localStorage.getItem(`team:${gameCode}`) as Team | null;
+    if (savedTeam && TEAMS.includes(savedTeam)) {
+      setTeam(savedTeam);
+    } else {
+      setTeam("");
+    }
+  }, [gameCode]);
+
+  useEffect(() => {
+    if (!gameCode) {
+      return;
+    }
+
+    let cancelled = false;
     const load = async () => {
       try {
-        const stateRes = await fetch("/api/state", { cache: "no-store" });
+        setLoadingGameState(true);
+        setError(null);
+        const stateRes = await fetch(`/api/state?game=${encodeURIComponent(gameCode)}`, { cache: "no-store" });
 
-        if (stateRes.ok) {
-          const payload = (await stateRes.json()) as GameState;
+        if (!stateRes.ok) {
+          const payload = (await stateRes.json().catch(() => ({}))) as { error?: string };
+          throw new Error(payload.error ?? "Could not load selected game.");
+        }
+
+        const payload = (await stateRes.json()) as GameState;
+        if (!cancelled) {
           setState(payload);
         }
-      } catch {
-        setError("Failed to load initial state.");
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : "Failed to load game.");
+          setGameCode(null);
+          localStorage.removeItem("game_code");
+          if (typeof window !== "undefined") {
+            window.history.replaceState(null, "", "/");
+          }
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingGameState(false);
+        }
       }
     };
 
     void load();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [gameCode]);
 
   useEffect(() => {
-    const eventSource = new EventSource("/api/events");
+    if (!gameCode) {
+      return;
+    }
+
+    const eventSource = new EventSource(`/api/events?game=${encodeURIComponent(gameCode)}`);
 
     eventSource.onmessage = (event) => {
       try {
-        const payload = JSON.parse(event.data) as { state?: GameState };
+        const payload = JSON.parse(event.data) as { state?: GameState; error?: string };
         if (payload.state) {
           setState(payload.state);
+        }
+        if (payload.error) {
+          setError(payload.error);
         }
       } catch {
         setError("Realtime event parse failed.");
@@ -69,7 +139,7 @@ export default function QuestApp() {
     return () => {
       eventSource.close();
     };
-  }, []);
+  }, [gameCode]);
 
   const completedForTeam = useMemo(() => {
     if (!team) {
@@ -119,12 +189,108 @@ export default function QuestApp() {
     [state.defaultMapCenter?.lat, state.defaultMapCenter?.lng]
   );
 
+  const selectGameCode = (nextCode: string) => {
+    setGameCode(nextCode);
+    setState(INITIAL_STATE);
+    setError(null);
+    localStorage.setItem("game_code", nextCode);
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", `/?game=${encodeURIComponent(nextCode)}`);
+    }
+  };
+
+  const joinGame = async () => {
+    const normalizedCode = normalizeGameCode(gameInput);
+    if (!normalizedCode) {
+      setError("Invite code must be 6 letters/numbers.");
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setError(null);
+      const response = await fetch(`/api/games/${encodeURIComponent(normalizedCode)}`, {
+        cache: "no-store"
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Game not found.");
+      }
+
+      selectGameCode(normalizedCode);
+    } catch (joinError) {
+      setError(joinError instanceof Error ? joinError.message : "Could not join game.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createNewGame = async () => {
+    try {
+      setBusy(true);
+      setError(null);
+      const response = await fetch("/api/games", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; gameCode?: string };
+
+      if (!response.ok || !payload.gameCode) {
+        throw new Error(payload.error ?? "Could not create game.");
+      }
+
+      setGameInput(payload.gameCode);
+      selectGameCode(payload.gameCode);
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Could not create game.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const leaveGame = () => {
+    setGameCode(null);
+    setGameInput("");
+    setTeam("");
+    setState(INITIAL_STATE);
+    setError(null);
+    localStorage.removeItem("game_code");
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", "/");
+    }
+  };
+
+  const copyInviteCode = async () => {
+    if (!gameCode) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(gameCode);
+      setError(null);
+    } catch {
+      setError("Clipboard copy failed.");
+    }
+  };
+
   const setSelectedTeam = (nextTeam: Team) => {
+    if (!gameCode) {
+      return;
+    }
+
     setTeam(nextTeam);
-    localStorage.setItem("team", nextTeam);
+    localStorage.setItem(`team:${gameCode}`, nextTeam);
   };
 
   const submitCompletion = async (rawPayload: string) => {
+    if (!gameCode) {
+      const message = "Join a game before submitting a quest payload.";
+      setError(message);
+      throw new Error(message);
+    }
+
     if (!team) {
       const message = "Select a team before submitting a quest payload.";
       setError(message);
@@ -136,7 +302,7 @@ export default function QuestApp() {
     const response = await fetch("/api/complete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ team, payload: payloadValue })
+      body: JSON.stringify({ gameCode, team, payload: payloadValue })
     });
 
     const payload = await response.json();
@@ -154,15 +320,63 @@ export default function QuestApp() {
     setError(null);
   };
 
+  if (!gameCode) {
+    return (
+      <main className="landing-shell">
+        <section className="panel landing-panel">
+          <h1>Airsoft Quest Tracker</h1>
+          <p className="muted">Join an existing game with invite code or create your own game.</p>
+
+          <input
+            type="text"
+            placeholder="Invite code (e.g. A7C4KQ)"
+            value={gameInput}
+            onChange={(event) => setGameInput(sanitizeGameCode(event.target.value))}
+            className="game-code-input"
+          />
+
+          <div className="inline-actions">
+            <button type="button" onClick={() => void joinGame()} disabled={busy}>
+              {busy ? "Please wait..." : "Join Existing Game"}
+            </button>
+            <button type="button" onClick={() => void createNewGame()} disabled={busy}>
+              {busy ? "Please wait..." : "Create New Game"}
+            </button>
+          </div>
+
+          <p className="muted">Each game has isolated missions, markers, shapes, and admin settings.</p>
+          {error && <p className="error">{error}</p>}
+        </section>
+      </main>
+    );
+  }
+
+  const adminHref = `/admin?game=${encodeURIComponent(gameCode)}`;
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-top">
           <h1>Airsoft Quest Tracker</h1>
-          <Link href="/admin" className="nav-link-btn">
+          <Link href={adminHref} className="nav-link-btn">
             Admin
           </Link>
         </div>
+
+        <section className="panel">
+          <h2>Game Session</h2>
+          <p>
+            Invite code: <strong>{gameCode}</strong>
+          </p>
+          <div className="inline-actions">
+            <button type="button" onClick={() => void copyInviteCode()}>
+              Copy Invite Code
+            </button>
+            <button type="button" onClick={leaveGame}>
+              Switch Game
+            </button>
+          </div>
+        </section>
 
         <section className="panel">
           <h2>Scoreboard</h2>
@@ -230,13 +444,18 @@ export default function QuestApp() {
         </section>
 
         <section className="map-panel">
-          {!team && (
+          {loadingGameState && (
+            <div className="map-team-gate">
+              <h3>Loading game map...</h3>
+            </div>
+          )}
+          {!loadingGameState && !team && (
             <div className="map-team-gate">
               <h3>Select Team Participation</h3>
               <p>Click on Team Participation button (RED or BLUE) to unlock the map.</p>
             </div>
           )}
-          {team && (
+          {!loadingGameState && team && (
             <MissionMap
               missions={state.missions}
               completions={state.completions}

@@ -21,12 +21,12 @@ function createToken(payload: string) {
 
 function verifyToken(token: string | undefined) {
   if (!token) {
-    return false;
+    return null;
   }
 
   const [payload, providedSig] = token.split(".");
   if (!payload || !providedSig) {
-    return false;
+    return null;
   }
 
   const expectedSig = sign(payload);
@@ -34,24 +34,29 @@ function verifyToken(token: string | undefined) {
   const expected = Buffer.from(expectedSig, "utf8");
 
   if (provided.length !== expected.length) {
-    return false;
+    return null;
   }
 
-  return timingSafeEqual(provided, expected);
+  if (!timingSafeEqual(provided, expected)) {
+    return null;
+  }
+
+  return payload;
 }
 
 export function validateAdminPassword(password: string) {
   return password === getAdminPassword();
 }
 
-export function requestIsAdmin(request: NextRequest) {
-  return verifyToken(request.cookies.get(ADMIN_COOKIE_NAME)?.value);
+export function requestIsAdmin(request: NextRequest, gameCode: string) {
+  const payload = verifyToken(request.cookies.get(ADMIN_COOKIE_NAME)?.value);
+  return payload === "admin" || payload === `admin:${gameCode}`;
 }
 
-export function setAdminCookie(response: NextResponse) {
+export function setAdminCookie(response: NextResponse, gameCode: string) {
   response.cookies.set({
     name: ADMIN_COOKIE_NAME,
-    value: createToken("admin"),
+    value: createToken(`admin:${gameCode}`),
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",

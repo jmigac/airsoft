@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { GameState } from "./types";
 
 type StateEvent = {
+  gameCode: string;
   type: "sync" | "completion_added" | "mission_created" | "mission_updated" | "mission_deleted";
   state: GameState;
 };
@@ -20,9 +21,16 @@ export function broadcastState(event: StateEvent) {
   eventBus.emit("state", event);
 }
 
-export function onState(listener: (event: StateEvent) => void) {
-  eventBus.on("state", listener);
+export function onState(gameCode: string, listener: (event: StateEvent) => void) {
+  const wrapped = (event: StateEvent) => {
+    if (event.gameCode !== gameCode) {
+      return;
+    }
+    listener(event);
+  };
+
+  eventBus.on("state", wrapped);
   return () => {
-    eventBus.off("state", listener);
+    eventBus.off("state", wrapped);
   };
 }
