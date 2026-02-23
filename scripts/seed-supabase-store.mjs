@@ -3,13 +3,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-const SUPABASE_URL = (process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(
-  /\/+$/,
-  ""
-);
+const SUPABASE_URL = (process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "");
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const GAME_STATE_ID = 1;
-const STORE_SCHEMA_VERSION = 2;
 const DEFAULT_GAME_CODE = (process.env.SEED_GAME_CODE ?? "LEGACY1").toUpperCase();
 const MAP_MARKER_TYPES = new Set(["village", "north_spawn", "south_spawn", "house"]);
 const MAP_MARKER_META = {
@@ -44,6 +39,18 @@ function normalizeGameCode(value) {
   return /^[A-Z0-9]{6}$/.test(cleaned) ? cleaned : null;
 }
 
+function toNicknameLookupKey(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 24)
+    .toLowerCase();
+}
+
 function assertEnv() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error(
@@ -68,7 +75,17 @@ function buildHeaders(prefer) {
 }
 
 function buildUrl(pathname, params = new URLSearchParams()) {
-  return `${SUPABASE_URL}${pathname}?${params.toString()}`;
+  const query = params.toString();
+  return `${SUPABASE_URL}${pathname}${query ? `?${query}` : ""}`;
+}
+
+function normalizeIso(value, fallback = new Date().toISOString()) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : fallback;
 }
 
 function normalizeState(input) {
@@ -76,12 +93,50 @@ function normalizeState(input) {
     return {
       missions: [],
       completions: [],
+      players: [],
       defaultMapCenter: undefined,
       mapMarkers: [],
       mapShapes: [],
       mapSignals: []
     };
   }
+
+  const nowIso = new Date().toISOString();
+  const players = Array.isArray(input.players)
+    ? input.players
+        .filter(
+          (player) =>
+            player &&
+            typeof player === "object" &&
+            typeof player.id === "string" &&
+            typeof player.sessionId === "string" &&
+            typeof player.nickname === "string" &&
+            (player.team === "red" || player.team === "blue")
+        )
+        .map((player) => ({
+          id: player.id,
+          sessionId: player.sessionId,
+          nickname: player.nickname.trim().slice(0, 24),
+          team: player.team,
+          joinedAt: normalizeIso(player.joinedAt, nowIso),
+          lastSeenAt: normalizeIso(player.lastSeenAt, nowIso),
+          location:
+            player.location &&
+            typeof player.location === "object" &&
+            Number.isFinite(player.location.lat) &&
+            Number.isFinite(player.location.lng)
+              ? {
+                  lat: Number(player.location.lat),
+                  lng: Number(player.location.lng),
+                  accuracy:
+                    typeof player.location.accuracy === "number" && Number.isFinite(player.location.accuracy)
+                      ? player.location.accuracy
+                      : undefined,
+                  updatedAt: normalizeIso(player.location.updatedAt, nowIso)
+                }
+              : undefined
+        }))
+    : [];
 
   const defaultMapCenter =
     input.defaultMapCenter &&
@@ -117,9 +172,10 @@ function normalizeState(input) {
             (MAP_MARKER_TYPES.has(marker.type) ? MAP_MARKER_META[marker.type].color : "#5f676c"),
           lat: Number(marker.lat),
           lng: Number(marker.lng),
-          createdAt: typeof marker.createdAt === "string" ? marker.createdAt : new Date().toISOString()
+          createdAt: normalizeIso(marker.createdAt, nowIso)
         }))
     : [];
+
   const mapShapes = Array.isArray(input.mapShapes)
     ? input.mapShapes
         .filter(
@@ -155,10 +211,11 @@ function normalizeState(input) {
                 ? Math.min(1, Math.max(0, shape.opacity))
                 : 0.35,
             points,
-            createdAt: typeof shape.createdAt === "string" ? shape.createdAt : new Date().toISOString()
+            createdAt: normalizeIso(shape.createdAt, nowIso)
           };
         })
     : [];
+
   const nowMs = Date.now();
   const mapSignals = Array.isArray(input.mapSignals)
     ? input.mapSignals
@@ -172,30 +229,86 @@ function normalizeState(input) {
             Number.isFinite(signal.lat) &&
             Number.isFinite(signal.lng)
         )
-        .map((signal) => {
-          const expiresAtMs = Date.parse(
-            typeof signal.expiresAt === "string" ? signal.expiresAt : new Date(0).toISOString()
-          );
-
-          return {
-            id: signal.id,
-            type: signal.type,
-            team: signal.team,
-            lat: Number(signal.lat),
-            lng: Number(signal.lng),
-            createdAt: typeof signal.createdAt === "string" ? signal.createdAt : new Date().toISOString(),
-            expiresAt:
-              Number.isFinite(expiresAtMs) && expiresAtMs > nowMs
-                ? new Date(expiresAtMs).toISOString()
-                : new Date(0).toISOString()
-          };
-        })
+        .map((signal) => ({
+          id: signal.id,
+          type: signal.type,
+          team: signal.team,
+          lat: Number(signal.lat),
+          lng: Number(signal.lng),
+          createdAt: normalizeIso(signal.createdAt, nowIso),
+          expiresAt: normalizeIso(signal.expiresAt, nowIso)
+        }))
         .filter((signal) => Date.parse(signal.expiresAt) > nowMs)
     : [];
 
+  const missions = Array.isArray(input.missions)
+    ? input.missions
+        .filter((mission) => mission && typeof mission === "object" && typeof mission.id === "string")
+        .map((mission) => ({
+          id: mission.id,
+          name: typeof mission.name === "string" && mission.name.trim().length > 0 ? mission.name.trim() : "Mission",
+          qrCode: typeof mission.qrCode === "string" ? mission.qrCode.trim() : "",
+          mapCenter:
+            mission.mapCenter && Number.isFinite(mission.mapCenter.lat) && Number.isFinite(mission.mapCenter.lng)
+              ? {
+                  lat: Number(mission.mapCenter.lat),
+                  lng: Number(mission.mapCenter.lng)
+                }
+              : undefined,
+          timeWindowCET:
+            mission.timeWindowCET &&
+            typeof mission.timeWindowCET.startsAtCET === "string" &&
+            typeof mission.timeWindowCET.endsAtCET === "string"
+              ? {
+                  startsAtCET: mission.timeWindowCET.startsAtCET,
+                  endsAtCET: mission.timeWindowCET.endsAtCET
+                }
+              : undefined,
+          createdAt: normalizeIso(mission.createdAt, nowIso),
+          locations: Array.isArray(mission.locations)
+            ? mission.locations
+                .filter(
+                  (location) =>
+                    location &&
+                    typeof location === "object" &&
+                    typeof location.id === "string" &&
+                    Number.isFinite(location.lat) &&
+                    Number.isFinite(location.lng) &&
+                    Number.isFinite(location.radius)
+                )
+                .map((location) => ({
+                  id: location.id,
+                  lat: Number(location.lat),
+                  lng: Number(location.lng),
+                  radius: Number(location.radius)
+                }))
+            : []
+        }))
+    : [];
+
+  const completions = Array.isArray(input.completions)
+    ? input.completions
+        .filter(
+          (completion) =>
+            completion &&
+            typeof completion === "object" &&
+            typeof completion.id === "string" &&
+            typeof completion.missionId === "string" &&
+            (completion.team === "red" || completion.team === "blue")
+        )
+        .map((completion) => ({
+          id: completion.id,
+          missionId: completion.missionId,
+          team: completion.team,
+          qrCode: typeof completion.qrCode === "string" ? completion.qrCode.trim() : "",
+          completedAt: normalizeIso(completion.completedAt, nowIso)
+        }))
+    : [];
+
   return {
-    missions: Array.isArray(input.missions) ? input.missions : [],
-    completions: Array.isArray(input.completions) ? input.completions : [],
+    missions,
+    completions,
+    players,
     defaultMapCenter,
     mapMarkers,
     mapShapes,
@@ -214,41 +327,24 @@ async function requestJson(url, init) {
   return text ? JSON.parse(text) : null;
 }
 
-async function ensureRow() {
-  const params = new URLSearchParams({
-    on_conflict: "id",
-    select: "id"
-  });
-  await requestJson(buildUrl("/rest/v1/game_state", params), {
-    method: "POST",
-    headers: buildHeaders("resolution=ignore-duplicates,return=representation"),
-    body: JSON.stringify([
-      {
-        id: GAME_STATE_ID,
-        state: { schemaVersion: STORE_SCHEMA_VERSION, games: {} },
-        version: 1
-      }
-    ])
+async function deleteByGameCode(table, gameCode) {
+  const params = new URLSearchParams({ game_code: `eq.${gameCode}` });
+  await requestJson(buildUrl(`/rest/v1/${table}`, params), {
+    method: "DELETE",
+    headers: buildHeaders("return=minimal")
   });
 }
 
-async function readVersion() {
-  const params = new URLSearchParams({
-    select: "version",
-    id: `eq.${GAME_STATE_ID}`,
-    limit: "1"
-  });
-  const rows = await requestJson(buildUrl("/rest/v1/game_state", params), {
-    method: "GET",
-    headers: buildHeaders()
-  });
-
+async function insertRows(table, rows) {
   if (!Array.isArray(rows) || rows.length === 0) {
-    throw new Error("game_state row not found after initialization.");
+    return;
   }
 
-  const version = Number(rows[0].version);
-  return Number.isFinite(version) ? version : 1;
+  await requestJson(buildUrl(`/rest/v1/${table}`), {
+    method: "POST",
+    headers: buildHeaders("return=minimal"),
+    body: JSON.stringify(rows)
+  });
 }
 
 async function main() {
@@ -260,34 +356,143 @@ async function main() {
   const parsed = JSON.parse(raw);
   const state = normalizeState(parsed);
   const seedGameCode = normalizeGameCode(process.argv[3] ?? DEFAULT_GAME_CODE);
+
   if (!seedGameCode) {
     throw new Error("Invalid seed game code. Use a 6-character alphanumeric invite code.");
   }
-  const store = {
-    schemaVersion: STORE_SCHEMA_VERSION,
-    games: {
-      [seedGameCode]: state
+
+  await requestJson(
+    buildUrl(
+      "/rest/v1/games",
+      new URLSearchParams({
+        on_conflict: "code",
+        select: "code"
+      })
+    ),
+    {
+      method: "POST",
+      headers: buildHeaders("resolution=merge-duplicates,return=representation"),
+      body: JSON.stringify([
+        {
+          code: seedGameCode,
+          default_map_center_lat: state.defaultMapCenter ? Number(state.defaultMapCenter.lat) : null,
+          default_map_center_lng: state.defaultMapCenter ? Number(state.defaultMapCenter.lng) : null
+        }
+      ])
     }
-  };
+  );
 
-  await ensureRow();
-  const currentVersion = await readVersion();
+  await deleteByGameCode("mission_locations", seedGameCode);
+  await deleteByGameCode("completions", seedGameCode);
+  await deleteByGameCode("missions", seedGameCode);
+  await deleteByGameCode("map_shape_points", seedGameCode);
+  await deleteByGameCode("map_shapes", seedGameCode);
+  await deleteByGameCode("map_markers", seedGameCode);
+  await deleteByGameCode("players", seedGameCode);
+  await deleteByGameCode("map_signals", seedGameCode);
 
-  const params = new URLSearchParams({
-    select: "id",
-    id: `eq.${GAME_STATE_ID}`
-  });
+  const missionRows = state.missions.map((mission) => ({
+    id: mission.id,
+    game_code: seedGameCode,
+    name: mission.name,
+    qr_code: mission.qrCode,
+    map_center_lat: mission.mapCenter ? Number(mission.mapCenter.lat) : null,
+    map_center_lng: mission.mapCenter ? Number(mission.mapCenter.lng) : null,
+    time_window_starts_at_cet: mission.timeWindowCET?.startsAtCET ?? null,
+    time_window_ends_at_cet: mission.timeWindowCET?.endsAtCET ?? null,
+    created_at: mission.createdAt
+  }));
 
-  await requestJson(buildUrl("/rest/v1/game_state", params), {
-    method: "PATCH",
-    headers: buildHeaders("return=representation"),
-    body: JSON.stringify({
-      state: store,
-      version: currentVersion + 1
-    })
-  });
+  const missionLocationRows = state.missions.flatMap((mission) =>
+    mission.locations.map((location, index) => ({
+      id: location.id,
+      game_code: seedGameCode,
+      mission_id: mission.id,
+      lat: Number(location.lat),
+      lng: Number(location.lng),
+      radius: Number(location.radius),
+      sort_order: index
+    }))
+  );
 
-  console.log(`Seeded Supabase game_state from ${sourcePath} into game ${seedGameCode}`);
+  const completionRows = state.completions.map((completion) => ({
+    id: completion.id,
+    game_code: seedGameCode,
+    mission_id: completion.missionId,
+    team: completion.team,
+    qr_code: completion.qrCode,
+    completed_at: completion.completedAt
+  }));
+
+  const playerRows = state.players.map((player) => ({
+    id: player.id,
+    game_code: seedGameCode,
+    session_id: player.sessionId,
+    nickname: player.nickname,
+    nickname_key: toNicknameLookupKey(player.nickname),
+    team: player.team,
+    joined_at: player.joinedAt,
+    last_seen_at: player.lastSeenAt,
+    location_lat: player.location ? Number(player.location.lat) : null,
+    location_lng: player.location ? Number(player.location.lng) : null,
+    location_accuracy: typeof player.location?.accuracy === "number" ? player.location.accuracy : null,
+    location_updated_at: player.location?.updatedAt ?? null
+  }));
+
+  const markerRows = state.mapMarkers.map((marker) => ({
+    id: marker.id,
+    game_code: seedGameCode,
+    type: marker.type ?? null,
+    name: marker.name,
+    color: normalizeMarkerColor(marker.color) ?? "#5f676c",
+    lat: Number(marker.lat),
+    lng: Number(marker.lng),
+    created_at: marker.createdAt
+  }));
+
+  const shapeRows = state.mapShapes.map((shape) => ({
+    id: shape.id,
+    game_code: seedGameCode,
+    label: shape.label,
+    color: normalizeMarkerColor(shape.color) ?? "#5f676c",
+    opacity: shape.opacity,
+    created_at: shape.createdAt
+  }));
+
+  const shapePointRows = state.mapShapes.flatMap((shape) =>
+    shape.points.map((point, index) => ({
+      shape_id: shape.id,
+      game_code: seedGameCode,
+      point_index: index,
+      lat: Number(point.lat),
+      lng: Number(point.lng)
+    }))
+  );
+
+  const nowMs = Date.now();
+  const signalRows = state.mapSignals
+    .filter((signal) => Date.parse(signal.expiresAt) > nowMs)
+    .map((signal) => ({
+      id: signal.id,
+      game_code: seedGameCode,
+      type: signal.type,
+      team: signal.team,
+      lat: Number(signal.lat),
+      lng: Number(signal.lng),
+      created_at: signal.createdAt,
+      expires_at: signal.expiresAt
+    }));
+
+  await insertRows("missions", missionRows);
+  await insertRows("mission_locations", missionLocationRows);
+  await insertRows("completions", completionRows);
+  await insertRows("players", playerRows);
+  await insertRows("map_markers", markerRows);
+  await insertRows("map_shapes", shapeRows);
+  await insertRows("map_shape_points", shapePointRows);
+  await insertRows("map_signals", signalRows);
+
+  console.log(`Seeded Supabase normalized tables from ${sourcePath} into game ${seedGameCode}`);
 }
 
 main().catch((error) => {

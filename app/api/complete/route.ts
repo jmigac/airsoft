@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeGameCode } from "@/lib/game-code";
 import { completeMissionByQrCode } from "@/lib/mission-completion";
+import { getPlayerSessionId } from "@/lib/player-session";
+import { filterStateForTeam } from "@/lib/state-visibility";
+import { readState } from "@/lib/store";
 import { isValidQuestPayload } from "@/lib/payload";
-import { TEAMS, Team } from "@/lib/types";
+import { Team } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,15 +13,15 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as { team?: Team; qrCode?: string; payload?: string; gameCode?: string };
   const gameCode = normalizeGameCode(body.gameCode ?? null);
-  const team = body.team;
   const qrCode = (body.payload ?? body.qrCode ?? "").trim();
 
   if (!gameCode) {
     return NextResponse.json({ error: "Valid game code is required." }, { status: 400 });
   }
 
-  if (!team || !TEAMS.includes(team)) {
-    return NextResponse.json({ error: "Invalid team" }, { status: 400 });
+  const sessionId = getPlayerSessionId(request);
+  if (!sessionId) {
+    return NextResponse.json({ error: "Join a team first." }, { status: 401 });
   }
 
   if (!qrCode) {
@@ -33,10 +36,17 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const current = await readState(gameCode);
+    const player = (current.players ?? []).find((entry) => entry.sessionId === sessionId);
+    if (!player) {
+      return NextResponse.json({ error: "Join a team first." }, { status: 401 });
+    }
+
+    const team = player.team;
     const result = await completeMissionByQrCode(gameCode, team, qrCode);
     return NextResponse.json({
       ok: true,
-      state: result.state,
+      state: filterStateForTeam(result.state, team),
       missionId: result.mission.id,
       missionName: result.mission.name,
       alreadyCompleted: result.alreadyCompleted

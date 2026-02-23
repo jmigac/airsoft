@@ -11,13 +11,15 @@ import { MAP_MARKER_META } from "@/lib/map-markers";
 import { generateQuestPayload, isValidQuestPayload, sanitizeQuestPayload } from "@/lib/payload";
 import { buildPinRevealPath, buildTriggerPath } from "@/lib/qr";
 import {
+  GamePlayer,
   MAP_MARKER_TYPES,
   MapCenter,
   MapMarker,
   MapMarkerType,
   MapShape,
   MapShapeDraft,
-  Mission
+  Mission,
+  Team
 } from "@/lib/types";
 
 export type MissionPayload = {
@@ -34,7 +36,8 @@ const ADMIN_TAB_ITEMS = [
   { id: "tactical_icons", label: "Tactical Icons" },
   { id: "map_shapes", label: "Map Shapes" },
   { id: "mission_builder", label: "Mission Builder" },
-  { id: "existing_missions", label: "Existing Missions" }
+  { id: "existing_missions", label: "Existing Missions" },
+  { id: "players", label: "Players" }
 ] as const;
 
 type AdminTabId = (typeof ADMIN_TAB_ITEMS)[number]["id"];
@@ -43,6 +46,7 @@ type Props = {
   gameCode: string;
   isAdmin: boolean;
   missions: Mission[];
+  players: GamePlayer[];
   mapMarkers: MapMarker[];
   mapShapes: MapShape[];
   defaultMapCenter: MapCenter | null;
@@ -69,6 +73,8 @@ type Props = {
   onDeleteMapShape: (shapeId: string) => Promise<void>;
   onCreateMission: (payload: MissionPayload) => Promise<void>;
   onDeleteMission: (missionId: string) => Promise<void>;
+  onSwitchPlayerTeam: (nickname: string, team: Team) => Promise<void>;
+  onDeletePlayer: (playerId: string) => Promise<void>;
   onFocusMissionMap: (center: { lat: number; lng: number }) => void;
   onShapeDraftChange: (draft: MapShapeDraft | null) => void;
 };
@@ -77,6 +83,7 @@ export default function AdminPanel({
   gameCode,
   isAdmin,
   missions,
+  players,
   mapMarkers,
   mapShapes,
   defaultMapCenter,
@@ -92,6 +99,8 @@ export default function AdminPanel({
   onDeleteMapShape,
   onCreateMission,
   onDeleteMission,
+  onSwitchPlayerTeam,
+  onDeletePlayer,
   onFocusMissionMap,
   onShapeDraftChange
 }: Props) {
@@ -122,6 +131,8 @@ export default function AdminPanel({
   const [draftQrPreview, setDraftQrPreview] = useState<string | null>(null);
   const [missionQrPreviews, setMissionQrPreviews] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<AdminTabId>("map_settings");
+  const [selectedPlayerNickname, setSelectedPlayerNickname] = useState("");
+  const [selectedPlayerTeam, setSelectedPlayerTeam] = useState<Team>("red");
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -252,6 +263,19 @@ export default function AdminPanel({
       cancelled = true;
     };
   }, [appOrigin, gameCode, isAdmin, missions]);
+
+  useEffect(() => {
+    if (players.length === 0) {
+      setSelectedPlayerNickname("");
+      return;
+    }
+
+    const exists = players.some((player) => player.nickname === selectedPlayerNickname);
+    if (!exists) {
+      setSelectedPlayerNickname(players[0].nickname);
+      setSelectedPlayerTeam(players[0].team);
+    }
+  }, [players, selectedPlayerNickname]);
 
   const doLogin = async () => {
     try {
@@ -570,6 +594,51 @@ export default function AdminPanel({
     }
   };
 
+  const switchPlayerTeam = async () => {
+    if (!selectedPlayerNickname) {
+      setError("Select a player nickname first.");
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setError(null);
+      await onSwitchPlayerTeam(selectedPlayerNickname, selectedPlayerTeam);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not switch player team.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removePlayer = async (playerId: string) => {
+    try {
+      setBusy(true);
+      setError(null);
+      await onDeletePlayer(playerId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove player.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const swapPlayerTeam = async (player: GamePlayer) => {
+    const nextTeam: Team = player.team === "red" ? "blue" : "red";
+    try {
+      setBusy(true);
+      setError(null);
+      await onSwitchPlayerTeam(player.nickname, nextTeam);
+      if (selectedPlayerNickname === player.nickname) {
+        setSelectedPlayerTeam(nextTeam);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not swap player team.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!isAdmin) {
     return (
       <section className="panel">
@@ -632,52 +701,64 @@ export default function AdminPanel({
       <div className="admin-form">
         {activeTab === "map_settings" && (
           <section className="admin-section">
-          <h3>1. Map Settings</h3>
-          <p className="muted">Set the visitor start position and toggle map click picker.</p>
+            <h3>1. Map Settings</h3>
+            <p className="muted">Configure the default visitor start point and map coordinate picker.</p>
 
-          <div className="location-grid">
-            <input
-              type="text"
-              placeholder="Default latitude"
-              value={defaultMapCenterLat}
-              onChange={(event) => setDefaultMapCenterLat(event.target.value)}
-            />
-            <input
-              type="text"
-              placeholder="Default longitude"
-              value={defaultMapCenterLng}
-              onChange={(event) => setDefaultMapCenterLng(event.target.value)}
-            />
-            <button type="button" onClick={applyPickedPointToDefaultMapCenter}>
-              Use Picked Point
-            </button>
-          </div>
+            <div className="map-settings-column">
+              <div className="map-settings-subgroup">
+                <h4>Map Picker</h4>
+                <p className="muted">Enable picker to click coordinates directly from map for all admin forms.</p>
+                <button type="button" onClick={() => onMapPickModeChange(!mapPickMode)}>
+                  {mapPickMode ? "Disable Picker" : "Enable Picker"}
+                </button>
+                <p className="muted">
+                  {mapPickMode ? "Picker enabled: click map to capture coordinates." : "Picker disabled."}
+                </p>
+              </div>
 
-          <div className="inline-actions">
-            <button type="button" onClick={() => void saveDefaultMapCenter()} disabled={busy}>
-              {busy ? "Saving..." : "Save Start Position"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setDefaultMapCenterLat("");
-                setDefaultMapCenterLng("");
-                setError(null);
-              }}
-              disabled={busy}
-            >
-              Clear Fields
-            </button>
-            <button type="button" onClick={() => onMapPickModeChange(!mapPickMode)}>
-              {mapPickMode ? "Disable" : "Enable"} map click picker
-            </button>
-          </div>
-
-          {defaultMapCenter && (
-            <p className="muted">
-              Current visitor map start: {defaultMapCenter.lat.toFixed(6)}, {defaultMapCenter.lng.toFixed(6)}
-            </p>
-          )}
+              <div className="map-settings-subgroup">
+                <h4>Default Visitor Start</h4>
+                <p className="muted">Set the latitude/longitude where all players initially see the map.</p>
+                <div className="map-settings-center-grid">
+                  <input
+                    type="text"
+                    placeholder="Latitude"
+                    value={defaultMapCenterLat}
+                    onChange={(event) => setDefaultMapCenterLat(event.target.value)}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Longitude"
+                    value={defaultMapCenterLng}
+                    onChange={(event) => setDefaultMapCenterLng(event.target.value)}
+                  />
+                </div>
+                <div className="inline-actions">
+                  <button type="button" onClick={applyPickedPointToDefaultMapCenter}>
+                    Use Picked Point
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDefaultMapCenterLat("");
+                      setDefaultMapCenterLng("");
+                      setError(null);
+                    }}
+                    disabled={busy}
+                  >
+                    Clear
+                  </button>
+                  <button type="button" onClick={() => void saveDefaultMapCenter()} disabled={busy}>
+                    {busy ? "Saving..." : "Save Start Position"}
+                  </button>
+                </div>
+                {defaultMapCenter && (
+                  <p className="muted">
+                    Current: {defaultMapCenter.lat.toFixed(6)}, {defaultMapCenter.lng.toFixed(6)}
+                  </p>
+                )}
+              </div>
+            </div>
           </section>
         )}
 
@@ -951,7 +1032,7 @@ export default function AdminPanel({
           )}
 
           <h3>Map Center For This Quest</h3>
-          <div className="location-grid">
+          <div className="quest-map-center-grid">
             <input
               type="text"
               placeholder="Map center latitude"
@@ -1097,6 +1178,99 @@ export default function AdminPanel({
             })}
           </ul>
         )}
+        </section>
+      )}
+
+      {activeTab === "players" && (
+        <section className="admin-section">
+          <h3>6. Players</h3>
+          <p className="muted">Manage player team assignments by nickname. Use swap icon for quick team switch.</p>
+
+          {players.length === 0 && <p className="muted">No players joined this game yet.</p>}
+
+          {players.length > 0 && (
+            <>
+              <div className="location-grid">
+                <select
+                  value={selectedPlayerNickname}
+                  onChange={(event) => {
+                    const nickname = event.target.value;
+                    setSelectedPlayerNickname(nickname);
+                    const selected = players.find((player) => player.nickname === nickname);
+                    if (selected) {
+                      setSelectedPlayerTeam(selected.team);
+                    }
+                  }}
+                >
+                  {players.map((player) => (
+                    <option key={player.id} value={player.nickname}>
+                      {player.nickname}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={selectedPlayerTeam}
+                  onChange={(event) => setSelectedPlayerTeam(event.target.value as Team)}
+                >
+                  <option value="red">RED</option>
+                  <option value="blue">BLUE</option>
+                </select>
+
+                <button type="button" onClick={() => void switchPlayerTeam()} disabled={busy || !selectedPlayerNickname}>
+                  {busy ? "Switching..." : "Switch Team"}
+                </button>
+              </div>
+
+              <ul className="location-list">
+                {players
+                  .slice()
+                  .sort((a, b) => a.nickname.localeCompare(b.nickname))
+                  .map((player) => (
+                    <li key={player.id}>
+                      <div className="player-row-main">
+                        <span>
+                          <strong>{player.nickname}</strong> ({player.team.toUpperCase()})
+                        </span>
+                        <span className="muted">Last seen: {new Date(player.lastSeenAt).toLocaleString()}</span>
+                      </div>
+                      <div className="player-row-actions">
+                        <button
+                          type="button"
+                          className="icon-action-btn"
+                          onClick={() => void swapPlayerTeam(player)}
+                          disabled={busy}
+                          title={`Swap team for ${player.nickname}`}
+                          aria-label={`Swap team for ${player.nickname}`}
+                        >
+                          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                            <path
+                              d="M7 7h9.17l-2.58-2.59L15 3l5 5-5 5-1.41-1.41L16.17 9H7V7Zm10 10H7.83l2.58 2.59L9 21l-5-5 5-5 1.41 1.41L7.83 15H17v2Z"
+                              fill="currentColor"
+                            />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-action-btn danger"
+                          onClick={() => void removePlayer(player.id)}
+                          disabled={busy}
+                          title={`Delete ${player.nickname}`}
+                          aria-label={`Delete player ${player.nickname}`}
+                        >
+                          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                            <path
+                              d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM6 9h2v8H6V9Zm1 12h10a2 2 0 0 0 2-2V8H5v11a2 2 0 0 0 2 2Z"
+                              fill="currentColor"
+                            />
+                          </svg>
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+              </ul>
+            </>
+          )}
         </section>
       )}
 
