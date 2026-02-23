@@ -20,6 +20,7 @@ import { formatCETDateTime, isMissionExpired } from "@/lib/mission-time";
 import {
   Completion,
   MapCenter,
+  GamePlayer,
   MapMarker,
   MapShape,
   MapShapeDraft,
@@ -32,6 +33,7 @@ import {
 type Props = {
   missions: Mission[];
   completions: Completion[];
+  players: GamePlayer[];
   mapMarkers: MapMarker[];
   mapShapes: MapShape[];
   mapSignals: MapSignal[];
@@ -42,6 +44,8 @@ type Props = {
   defaultCenter?: MapCenter | null;
   centerOverride?: { lat: number; lng: number } | null;
   draftShape?: MapShapeDraft | null;
+  showCenterOnPlayerControl?: boolean;
+  currentPlayerLocation?: MapCenter | null;
 };
 
 type SignalGestureMenu = {
@@ -63,6 +67,15 @@ type PressStartPayload = {
 type PressMovePayload = {
   clientX: number;
   clientY: number;
+};
+
+type FullscreenDocument = Document & {
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => Promise<void> | void;
+};
+
+type FullscreenElement = HTMLElement & {
+  webkitRequestFullscreen?: () => Promise<void> | void;
 };
 
 const SIGNAL_LONG_PRESS_MS = 420;
@@ -183,6 +196,7 @@ function escapeHtml(value: string) {
 export default function MissionMap({
   missions,
   completions,
+  players,
   mapMarkers,
   mapShapes,
   mapSignals,
@@ -192,16 +206,80 @@ export default function MissionMap({
   onCreateQuickSignal,
   defaultCenter = null,
   centerOverride = null,
-  draftShape = null
+  draftShape = null,
+  showCenterOnPlayerControl = false,
+  currentPlayerLocation = null
 }: Props) {
   const [now, setNow] = useState(() => new Date());
   const [signalGestureMenu, setSignalGestureMenu] = useState<SignalGestureMenu | null>(null);
   const [signalPickerBusy, setSignalPickerBusy] = useState(false);
   const [signalPickerError, setSignalPickerError] = useState<string | null>(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState<string | null>(null);
   const [mapInstance, setMapInstance] = useState<LeafletMap | null>(null);
   const mapWrapRef = useRef<HTMLDivElement | null>(null);
   const signalLongPressTimer = useRef<number | null>(null);
   const pressStartRef = useRef<PressStartPayload | null>(null);
+
+  const isFullscreenSupported = useMemo(() => {
+    if (typeof document === "undefined") {
+      return false;
+    }
+
+    const documentWithWebkit = document as FullscreenDocument;
+    const root = document.documentElement as FullscreenElement;
+    return (
+      typeof document.exitFullscreen === "function" ||
+      typeof documentWithWebkit.webkitExitFullscreen === "function" ||
+      typeof root.requestFullscreen === "function" ||
+      typeof root.webkitRequestFullscreen === "function"
+    );
+  }, []);
+
+  const showFullscreenToggle = isMobileViewport && isFullscreenSupported;
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const mobileQuery = window.matchMedia("(max-width: 1024px) and (pointer: coarse)");
+    const sync = () => {
+      setIsMobileViewport(mobileQuery.matches);
+    };
+
+    sync();
+    mobileQuery.addEventListener("change", sync);
+    return () => {
+      mobileQuery.removeEventListener("change", sync);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const syncFullscreen = () => {
+      const documentWithWebkit = document as FullscreenDocument;
+      setIsFullscreen(Boolean(document.fullscreenElement ?? documentWithWebkit.webkitFullscreenElement));
+
+      if (mapInstance) {
+        // Leaflet needs explicit resize when container dimensions change in fullscreen transitions.
+        window.setTimeout(() => {
+          mapInstance.invalidateSize();
+        }, 120);
+      }
+    };
+
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    document.addEventListener("webkitfullscreenchange", syncFullscreen as EventListener);
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreen);
+      document.removeEventListener("webkitfullscreenchange", syncFullscreen as EventListener);
+    };
+  }, [mapInstance]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -272,6 +350,16 @@ export default function MissionMap({
           (selectedTeam ? signal.team === selectedTeam : true)
       ),
     [mapSignals, now, selectedTeam]
+  );
+  const activePlayerLocations = useMemo(
+    () =>
+      players.filter(
+        (player) =>
+          player.location &&
+          Date.parse(player.location.updatedAt) > now.getTime() - 75_000 &&
+          (selectedTeam ? player.team === selectedTeam : true)
+      ),
+    [players, now, selectedTeam]
   );
   const signalIcons = useMemo(
     () =>
@@ -522,6 +610,48 @@ export default function MissionMap({
     }
   };
 
+  const toggleFullscreen = async () => {
+    if (!mapWrapRef.current) {
+      return;
+    }
+
+    const documentWithWebkit = document as FullscreenDocument;
+    const mapElement = mapWrapRef.current as FullscreenElement;
+    const currentFullscreenElement = document.fullscreenElement ?? documentWithWebkit.webkitFullscreenElement;
+
+    try {
+      setFullscreenError(null);
+      if (currentFullscreenElement) {
+        if (typeof document.exitFullscreen === "function") {
+          await document.exitFullscreen();
+        } else if (typeof documentWithWebkit.webkitExitFullscreen === "function") {
+          await documentWithWebkit.webkitExitFullscreen();
+        }
+        return;
+      }
+
+      if (typeof mapElement.requestFullscreen === "function") {
+        await mapElement.requestFullscreen();
+      } else if (typeof mapElement.webkitRequestFullscreen === "function") {
+        await mapElement.webkitRequestFullscreen();
+      } else {
+        setFullscreenError("Fullscreen mode is not supported on this browser.");
+      }
+    } catch {
+      setFullscreenError("Could not toggle fullscreen mode.");
+    }
+  };
+
+  const centerMapOnCurrentPlayer = () => {
+    if (!mapInstance || !currentPlayerLocation) {
+      return;
+    }
+
+    mapInstance.flyTo([currentPlayerLocation.lat, currentPlayerLocation.lng], mapInstance.getZoom(), {
+      duration: 0.45
+    });
+  };
+
   return (
     <div className="map-wrap-inner" ref={mapWrapRef}>
       <MapContainer
@@ -698,6 +828,31 @@ export default function MissionMap({
             </Marker>
           );
         })}
+
+        {activePlayerLocations.map((player) => {
+          if (!player.location) {
+            return null;
+          }
+
+          const color = player.team === "red" ? "#c53131" : "#1f76d1";
+          return (
+            <CircleMarker
+              key={`player-location-${player.id}`}
+              center={[player.location.lat, player.location.lng]}
+              radius={6}
+              pathOptions={{
+                color,
+                fillColor: color,
+                fillOpacity: 0.9,
+                weight: 2
+              }}
+            >
+              <Tooltip permanent direction="top" offset={[0, -10]} className="player-location-label" opacity={1}>
+                {player.nickname}
+              </Tooltip>
+            </CircleMarker>
+          );
+        })}
       </MapContainer>
 
       {signalGestureEnabled && signalGestureMenu && (
@@ -735,6 +890,58 @@ export default function MissionMap({
         <div className="map-signal-gesture-hint">
           <span className="muted">Hold, drag to icon, release ({MAP_SIGNAL_DURATION_MS / 60000} min)</span>
           {signalPickerError && <p className="error">{signalPickerError}</p>}
+        </div>
+      )}
+
+      {(showCenterOnPlayerControl || showFullscreenToggle) && (
+        <div className="map-top-right-controls">
+          {showCenterOnPlayerControl && (
+            <button
+              type="button"
+              className="map-top-icon-btn map-center-target-btn"
+              onClick={centerMapOnCurrentPlayer}
+              disabled={!currentPlayerLocation}
+              title={currentPlayerLocation ? "Center on current player" : "Location is not available yet"}
+              aria-label="Center map on current player"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                <path
+                  d="M11 2h2v3.07A7.002 7.002 0 0 1 18.93 11H22v2h-3.07A7.002 7.002 0 0 1 13 18.93V22h-2v-3.07A7.002 7.002 0 0 1 5.07 13H2v-2h3.07A7.002 7.002 0 0 1 11 5.07V2Zm1 5a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm0 3a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z"
+                  fill="currentColor"
+                />
+              </svg>
+            </button>
+          )}
+
+          {showFullscreenToggle && (
+            <button
+              type="button"
+              className="map-top-icon-btn map-fullscreen-btn"
+              onClick={() => void toggleFullscreen()}
+              title={isFullscreen ? "Exit fullscreen" : "Fullscreen map"}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen map"}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                {isFullscreen ? (
+                  <path
+                    d="M9 5H5v4h2V7h2V5Zm8 0h-4v2h2v2h2V5ZM7 15H5v4h4v-2H7v-2Zm10 0h-2v2h-2v2h4v-4Z"
+                    fill="currentColor"
+                  />
+                ) : (
+                  <path
+                    d="M5 5h6v2H7v4H5V5Zm14 0v6h-2V7h-4V5h6Zm-2 14h-6v-2h4v-4h2v6ZM5 19v-6h2v4h4v2H5Z"
+                    fill="currentColor"
+                  />
+                )}
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
+
+      {showFullscreenToggle && fullscreenError && (
+        <div className="map-top-right-error">
+          <p className="error">{fullscreenError}</p>
         </div>
       )}
 

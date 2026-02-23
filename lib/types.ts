@@ -14,6 +14,23 @@ export type MapCenter = {
   lng: number;
 };
 
+export type PlayerLocation = {
+  lat: number;
+  lng: number;
+  accuracy?: number;
+  updatedAt: string;
+};
+
+export type GamePlayer = {
+  id: string;
+  sessionId: string;
+  nickname: string;
+  team: Team;
+  joinedAt: string;
+  lastSeenAt: string;
+  location?: PlayerLocation;
+};
+
 export const MAP_SIGNAL_TYPES = ["info", "danger", "intel"] as const;
 
 export type MapSignalType = (typeof MAP_SIGNAL_TYPES)[number];
@@ -84,6 +101,7 @@ export type Completion = {
 export type GameState = {
   missions: Mission[];
   completions: Completion[];
+  players?: GamePlayer[];
   defaultMapCenter?: MapCenter;
   mapMarkers?: MapMarker[];
   mapShapes?: MapShape[];

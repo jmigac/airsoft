@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { broadcastState } from "@/lib/events";
 import { requireGameCodeFromRequest } from "@/lib/game-request";
 import { isMapSignalType, MAP_SIGNAL_DURATION_MS } from "@/lib/map-signals";
-import { TEAMS, Team } from "@/lib/types";
-import { updateState } from "@/lib/store";
+import { getPlayerSessionId } from "@/lib/player-session";
+import { filterStateForTeam } from "@/lib/state-visibility";
+import { readState, updateState } from "@/lib/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type CreateSignalPayload = {
-  team?: Team;
   type?: string;
   lat?: number;
   lng?: number;
@@ -21,13 +21,13 @@ export async function POST(request: NextRequest) {
     return game.response;
   }
 
-  const payload = (await request.json().catch(() => ({}))) as CreateSignalPayload;
-  const team = payload.team;
-  const signalType = typeof payload.type === "string" ? payload.type : "";
-
-  if (!team || !TEAMS.includes(team)) {
-    return NextResponse.json({ error: "Invalid team." }, { status: 400 });
+  const sessionId = getPlayerSessionId(request);
+  if (!sessionId) {
+    return NextResponse.json({ error: "Join a team first." }, { status: 401 });
   }
+
+  const payload = (await request.json().catch(() => ({}))) as CreateSignalPayload;
+  const signalType = typeof payload.type === "string" ? payload.type : "";
 
   if (!isMapSignalType(signalType)) {
     return NextResponse.json({ error: "Invalid signal type." }, { status: 400 });
@@ -41,6 +41,13 @@ export async function POST(request: NextRequest) {
   const expiresAt = new Date(Date.now() + MAP_SIGNAL_DURATION_MS).toISOString();
 
   try {
+    const current = await readState(game.gameCode);
+    const player = (current.players ?? []).find((entry) => entry.sessionId === sessionId);
+    if (!player) {
+      return NextResponse.json({ error: "Join a team first." }, { status: 401 });
+    }
+
+    const team = player.team;
     const state = await updateState(game.gameCode, (current) => ({
       ...current,
       mapSignals: [
@@ -58,7 +65,7 @@ export async function POST(request: NextRequest) {
     }));
 
     broadcastState({ gameCode: game.gameCode, type: "sync", state });
-    return NextResponse.json({ ok: true, state });
+    return NextResponse.json({ ok: true, state: filterStateForTeam(state, team) });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Could not place signal." },

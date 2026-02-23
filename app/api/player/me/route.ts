@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireGameCodeFromRequest } from "@/lib/game-request";
+import { getPlayerSessionId } from "@/lib/player-session";
 import { readState } from "@/lib/store";
-import { filterStateForViewer, resolveStateViewerFromRequest } from "@/lib/state-visibility";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,13 +12,19 @@ export async function GET(request: NextRequest) {
     return game.response;
   }
 
+  const sessionId = getPlayerSessionId(request);
+  if (!sessionId) {
+    return NextResponse.json({ player: null });
+  }
+
   try {
     const state = await readState(game.gameCode);
-    const viewer = resolveStateViewerFromRequest(request, game.gameCode, state);
-    return NextResponse.json(filterStateForViewer(state, viewer));
+    const player = (state.players ?? []).find((entry) => entry.sessionId === sessionId) ?? null;
+    return NextResponse.json({ player });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not load game state.";
-    const status = message.includes("not found") ? 404 : 400;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Could not load player profile." },
+      { status: 400 }
+    );
   }
 }

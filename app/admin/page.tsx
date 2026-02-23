@@ -16,6 +16,7 @@ const MissionMap = dynamic(() => import("@/app/components/MissionMap"), {
 const INITIAL_STATE: GameState = {
   missions: [],
   completions: [],
+  players: [],
   defaultMapCenter: undefined,
   mapMarkers: [],
   mapShapes: [],
@@ -298,6 +299,46 @@ export default function AdminPage() {
     }
   };
 
+  const switchPlayerTeam = async (nickname: string, team: "red" | "blue") => {
+    if (!gameCode) {
+      throw new Error("Join a game first.");
+    }
+
+    const response = await fetch(appendGameCode("/api/admin/players/team", gameCode), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nickname, team })
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as { error?: string; state?: GameState };
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Failed to switch player team.");
+    }
+
+    if (payload.state) {
+      setState(payload.state);
+    }
+  };
+
+  const deletePlayer = async (playerId: string) => {
+    if (!gameCode) {
+      throw new Error("Join a game first.");
+    }
+
+    const response = await fetch(appendGameCode(`/api/admin/players/${playerId}`, gameCode), {
+      method: "DELETE"
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as { error?: string; state?: GameState };
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Failed to delete player.");
+    }
+
+    if (payload.state) {
+      setState(payload.state);
+    }
+  };
+
   const createMapMarker = async (payload: { type?: string; name: string; color: string; lat: number; lng: number }) => {
     if (!gameCode) {
       throw new Error("Join a game first.");
@@ -422,6 +463,11 @@ export default function AdminPage() {
             value={gameInput}
             onChange={(event) => setGameInput(sanitizeGameCode(event.target.value))}
             className="game-code-input"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            suppressHydrationWarning
           />
 
           <div className="inline-actions">
@@ -467,6 +513,7 @@ export default function AdminPage() {
             <MissionMap
               missions={state.missions}
               completions={state.completions}
+              players={state.players ?? []}
               mapMarkers={state.mapMarkers ?? []}
               mapShapes={state.mapShapes ?? []}
               mapSignals={state.mapSignals ?? []}
@@ -484,6 +531,7 @@ export default function AdminPage() {
           gameCode={gameCode}
           isAdmin={isAdmin}
           missions={state.missions}
+          players={state.players ?? []}
           mapMarkers={state.mapMarkers ?? []}
           mapShapes={state.mapShapes ?? []}
           defaultMapCenter={defaultMapCenter}
@@ -499,6 +547,8 @@ export default function AdminPage() {
           onDeleteMapShape={deleteMapShape}
           onCreateMission={createMission}
           onDeleteMission={deleteMission}
+          onSwitchPlayerTeam={switchPlayerTeam}
+          onDeletePlayer={deletePlayer}
           onFocusMissionMap={setMapCenterOverride}
           onShapeDraftChange={setDraftShape}
         />

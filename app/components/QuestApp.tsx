@@ -2,12 +2,12 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import QuestCodeModal from "./QuestCodeModal";
 import { clearGameCodeCookie, readGameCodeCookie, writeGameCodeCookie } from "@/lib/game-cookie";
 import { normalizeGameCode, sanitizeGameCode } from "@/lib/game-code";
 import { sanitizeQuestPayload } from "@/lib/payload";
-import { GameState, MapSignalType, TEAMS, Team } from "@/lib/types";
+import { GamePlayer, GameState, MapSignalType, Team, TEAMS } from "@/lib/types";
 
 const MissionMap = dynamic(() => import("./MissionMap"), {
   ssr: false,
@@ -17,21 +17,30 @@ const MissionMap = dynamic(() => import("./MissionMap"), {
 const INITIAL_STATE: GameState = {
   missions: [],
   completions: [],
+  players: [],
   defaultMapCenter: undefined,
   mapMarkers: [],
   mapShapes: [],
   mapSignals: []
 };
 
+type LocationShareStatus = "unknown" | "prompt" | "granted" | "denied" | "unavailable";
+
 export default function QuestApp() {
   const [state, setState] = useState<GameState>(INITIAL_STATE);
-  const [team, setTeam] = useState<Team | "">("");
+  const [player, setPlayer] = useState<GamePlayer | null>(null);
+  const [nicknameInput, setNicknameInput] = useState("");
   const [gameCode, setGameCode] = useState<string | null>(null);
   const [gameInput, setGameInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loadingGameState, setLoadingGameState] = useState(false);
+  const [locationShareStatus, setLocationShareStatus] = useState<LocationShareStatus>("unknown");
+  const [locationShareMessage, setLocationShareMessage] = useState<string | null>(null);
+  const [lastLocationUpdateAt, setLastLocationUpdateAt] = useState<string | null>(null);
+  const selectedTeam = player?.team ?? null;
+  const playerId = player?.id ?? null;
 
   useEffect(() => {
     const fromUrl = (() => {
@@ -56,17 +65,74 @@ export default function QuestApp() {
 
   useEffect(() => {
     if (!gameCode) {
-      setTeam("");
+      setPlayer(null);
+      setNicknameInput("");
+      setLocationShareStatus("unknown");
+      setLocationShareMessage(null);
+      setLastLocationUpdateAt(null);
+      return;
+    }
+  }, [gameCode]);
+
+  useEffect(() => {
+    if (!player) {
+      setLocationShareStatus("unknown");
+      setLocationShareMessage(null);
+      setLastLocationUpdateAt(null);
       return;
     }
 
-    const savedTeam = localStorage.getItem(`team:${gameCode}`) as Team | null;
-    if (savedTeam && TEAMS.includes(savedTeam)) {
-      setTeam(savedTeam);
-    } else {
-      setTeam("");
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setLocationShareStatus("unavailable");
+      return;
     }
-  }, [gameCode]);
+
+    const permissionApi = navigator.permissions;
+    if (!permissionApi?.query) {
+      setLocationShareStatus((current) => (current === "unknown" ? "prompt" : current));
+      return;
+    }
+
+    let cancelled = false;
+    let permissionStatus: PermissionStatus | null = null;
+    const sync = (state: PermissionState) => {
+      if (cancelled) {
+        return;
+      }
+
+      if (state === "granted") {
+        setLocationShareStatus("granted");
+        return;
+      }
+
+      if (state === "denied") {
+        setLocationShareStatus("denied");
+        return;
+      }
+
+      setLocationShareStatus("prompt");
+    };
+
+    void permissionApi
+      .query({ name: "geolocation" as PermissionName })
+      .then((status) => {
+        permissionStatus = status;
+        sync(status.state);
+        permissionStatus.onchange = () => {
+          sync(permissionStatus?.state ?? "prompt");
+        };
+      })
+      .catch(() => {
+        sync("prompt");
+      });
+
+    return () => {
+      cancelled = true;
+      if (permissionStatus) {
+        permissionStatus.onchange = null;
+      }
+    };
+  }, [playerId]);
 
   useEffect(() => {
     if (!gameCode) {
@@ -78,7 +144,10 @@ export default function QuestApp() {
       try {
         setLoadingGameState(true);
         setError(null);
-        const stateRes = await fetch(`/api/state?game=${encodeURIComponent(gameCode)}`, { cache: "no-store" });
+        const [stateRes, meRes] = await Promise.all([
+          fetch(`/api/state?game=${encodeURIComponent(gameCode)}`, { cache: "no-store" }),
+          fetch(`/api/player/me?game=${encodeURIComponent(gameCode)}`, { cache: "no-store" })
+        ]);
 
         if (!stateRes.ok) {
           const payload = (await stateRes.json().catch(() => ({}))) as { error?: string };
@@ -86,8 +155,12 @@ export default function QuestApp() {
         }
 
         const payload = (await stateRes.json()) as GameState;
+        const mePayload = meRes.ok
+          ? ((await meRes.json()) as { player?: GamePlayer | null })
+          : { player: null };
         if (!cancelled) {
           setState(payload);
+          setPlayer(mePayload.player ?? null);
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -124,6 +197,13 @@ export default function QuestApp() {
         const payload = JSON.parse(event.data) as { state?: GameState; error?: string };
         if (payload.state) {
           setState(payload.state);
+          setPlayer((current) => {
+            if (!current) {
+              return current;
+            }
+
+            return (payload.state?.players ?? []).find((entry) => entry.id === current.id) ?? null;
+          });
         }
         if (payload.error) {
           setError(payload.error);
@@ -143,14 +223,14 @@ export default function QuestApp() {
   }, [gameCode]);
 
   const completedForTeam = useMemo(() => {
-    if (!team) {
+    if (!selectedTeam) {
       return [];
     }
 
     const missionById = new Map(state.missions.map((mission) => [mission.id, mission]));
 
     return state.completions
-      .filter((completion) => completion.team === team)
+      .filter((completion) => completion.team === selectedTeam)
       .map((completion) => {
         const mission = missionById.get(completion.missionId);
         return {
@@ -160,7 +240,7 @@ export default function QuestApp() {
         };
       })
       .sort((a, b) => b.completedAt.localeCompare(a.completedAt));
-  }, [state.completions, state.missions, team]);
+  }, [selectedTeam, state.completions, state.missions]);
 
   const redeemCountsByTeam = useMemo(() => {
     const counts: Record<Team, number> = { red: 0, blue: 0 };
@@ -194,6 +274,8 @@ export default function QuestApp() {
     setGameCode(nextCode);
     setState(INITIAL_STATE);
     setError(null);
+    setPlayer(null);
+    setNicknameInput("");
     writeGameCodeCookie(nextCode);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", `/?game=${encodeURIComponent(nextCode)}`);
@@ -254,7 +336,8 @@ export default function QuestApp() {
   const leaveGame = () => {
     setGameCode(null);
     setGameInput("");
-    setTeam("");
+    setPlayer(null);
+    setNicknameInput("");
     setState(INITIAL_STATE);
     setError(null);
     clearGameCodeCookie();
@@ -276,13 +359,45 @@ export default function QuestApp() {
     }
   };
 
-  const setSelectedTeam = (nextTeam: Team) => {
+  const joinTeam = async (team: "red" | "blue") => {
     if (!gameCode) {
       return;
     }
 
-    setTeam(nextTeam);
-    localStorage.setItem(`team:${gameCode}`, nextTeam);
+    const nickname = nicknameInput.trim();
+    if (nickname.length < 2) {
+      setError("Nickname is required (minimum 2 characters).");
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setError(null);
+      const response = await fetch(`/api/player/join?game=${encodeURIComponent(gameCode)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nickname, team })
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        player?: GamePlayer | null;
+        state?: GameState;
+      };
+
+      if (!response.ok || !payload.player) {
+        throw new Error(payload.error ?? "Could not join team.");
+      }
+
+      setPlayer(payload.player);
+      if (payload.state) {
+        setState(payload.state);
+      }
+    } catch (joinError) {
+      setError(joinError instanceof Error ? joinError.message : "Could not join team.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const submitCompletion = async (rawPayload: string) => {
@@ -292,8 +407,8 @@ export default function QuestApp() {
       throw new Error(message);
     }
 
-    if (!team) {
-      const message = "Select a team before submitting a quest payload.";
+    if (!player) {
+      const message = "Nickname and team selection are required before submitting payloads.";
       setError(message);
       throw new Error(message);
     }
@@ -303,7 +418,7 @@ export default function QuestApp() {
     const response = await fetch("/api/complete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ gameCode, team, payload: payloadValue })
+      body: JSON.stringify({ gameCode, payload: payloadValue })
     });
 
     const payload = await response.json();
@@ -326,15 +441,14 @@ export default function QuestApp() {
       throw new Error("Join a game first.");
     }
 
-    if (!team) {
-      throw new Error("Select team first.");
+    if (!player) {
+      throw new Error("Nickname and team selection are required first.");
     }
 
     const response = await fetch(`/api/signals?game=${encodeURIComponent(gameCode)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        team,
         type: payload.type,
         lat: payload.lat,
         lng: payload.lng
@@ -354,6 +468,133 @@ export default function QuestApp() {
     setError(null);
   };
 
+  const sendLocationSample = useCallback(
+    async (showFeedback: boolean) => {
+      if (!gameCode || !playerId) {
+        return;
+      }
+
+      if (typeof navigator === "undefined" || !navigator.geolocation) {
+        setLocationShareStatus("unavailable");
+        if (showFeedback) {
+          setLocationShareMessage("Location is not available on this device/browser.");
+        }
+        return;
+      }
+
+      try {
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            maximumAge: 10_000,
+            timeout: 10_000
+          });
+        });
+
+        const response = await fetch(`/api/player/location?game=${encodeURIComponent(gameCode)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+            accuracy: position.coords.accuracy
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error("Could not share location.");
+        }
+
+        const nowIso = new Date().toISOString();
+        setLocationShareStatus("granted");
+        setLastLocationUpdateAt(nowIso);
+        setLocationShareMessage(null);
+      } catch (locationError) {
+        const code =
+          typeof locationError === "object" && locationError !== null && "code" in locationError
+            ? Number((locationError as { code?: unknown }).code)
+            : null;
+
+        if (code === 1) {
+          setLocationShareStatus("denied");
+          setLocationShareMessage("Location access is blocked. Enable Location for this site in browser settings.");
+          return;
+        }
+
+        if (showFeedback) {
+          setLocationShareMessage("Could not get GPS position. Turn on Location services and try again.");
+        }
+        setLocationShareStatus((current) => (current === "granted" ? current : "prompt"));
+      }
+    },
+    [gameCode, playerId]
+  );
+
+  useEffect(() => {
+    if (!gameCode || !playerId) {
+      return;
+    }
+
+    if (locationShareStatus === "unavailable" || locationShareStatus === "denied") {
+      return;
+    }
+
+    let cancelled = false;
+
+    const sendLocation = async () => {
+      if (cancelled) {
+        return;
+      }
+      await sendLocationSample(false);
+    };
+
+    void sendLocation();
+    const interval = window.setInterval(() => {
+      void sendLocation();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [gameCode, locationShareStatus, playerId, sendLocationSample]);
+
+  const locationShareStatusLabel = useMemo(() => {
+    if (locationShareStatus === "granted") {
+      return "Enabled";
+    }
+
+    if (locationShareStatus === "denied") {
+      return "Blocked";
+    }
+
+    if (locationShareStatus === "unavailable") {
+      return "Unsupported";
+    }
+
+    if (locationShareStatus === "prompt") {
+      return "Not allowed yet";
+    }
+
+    return "Checking";
+  }, [locationShareStatus]);
+
+  const locationShareStatusClass = useMemo(() => {
+    if (locationShareStatus === "granted") {
+      return "is-enabled";
+    }
+
+    if (locationShareStatus === "denied") {
+      return "is-blocked";
+    }
+
+    if (locationShareStatus === "unavailable") {
+      return "is-unsupported";
+    }
+
+    return "is-pending";
+  }, [locationShareStatus]);
+
   if (!gameCode) {
     return (
       <main className="landing-shell">
@@ -369,13 +610,18 @@ export default function QuestApp() {
             value={gameInput}
             onChange={(event) => setGameInput(sanitizeGameCode(event.target.value))}
             className="game-code-input"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            suppressHydrationWarning
           />
 
           <div className="inline-actions">
             <button type="button" onClick={() => void joinGame()} disabled={busy}>
               {busy ? "Please wait..." : "Join Existing Game"}
             </button>
-            <button type="button" onClick={() => void createNewGame()} disabled>
+            <button type="button" onClick={() => void createNewGame()} disabled={busy}>
               {busy ? "Please wait..." : "Create New Game"}
             </button>
           </div>
@@ -430,27 +676,87 @@ export default function QuestApp() {
         </section>
 
         <section className="panel">
-          <h2>Your Team</h2>
-          <div className="team-grid">
-            {TEAMS.map((candidate) => (
-              <button
-                key={candidate}
-                type="button"
-                className={`team-btn team-btn-${candidate} ${team === candidate ? "active" : ""}`}
-                onClick={() => setSelectedTeam(candidate)}
-              >
-                {candidate.toUpperCase()}
-              </button>
-            ))}
-          </div>
-          {!team && <p className="muted">Click on Team Participation (RED or BLUE) before entering quest payload.</p>}
+          <h2>Team Participation</h2>
+          {!player && (
+            <>
+              <input
+                type="text"
+                placeholder="Nickname (required)"
+                value={nicknameInput}
+                onChange={(event) => setNicknameInput(event.target.value)}
+              />
+              <div className="team-grid">
+                {TEAMS.map((candidate) => (
+                  <button
+                    key={candidate}
+                    type="button"
+                    className={`team-btn team-btn-${candidate}`}
+                    onClick={() => void joinTeam(candidate)}
+                    disabled={busy}
+                  >
+                    Join {candidate.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              <p className="muted">Team is locked after joining. Ask admin if reassignment is needed.</p>
+            </>
+          )}
+          {player && (
+            <>
+              <div className="team-grid">
+                {TEAMS.map((candidate) => (
+                  <button
+                    key={candidate}
+                    type="button"
+                    className={`team-btn team-btn-${candidate} ${selectedTeam === candidate ? "active" : ""}`}
+                    disabled
+                  >
+                    {candidate.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              <p className="muted">
+                Nickname: <strong>{player.nickname}</strong>
+              </p>
+              <p className="muted">Team is locked on this device/session.</p>
+              <div className="location-share-box">
+                <div className="location-share-top">
+                  <p className="muted location-share-label">Location sharing</p>
+                  <span className={`location-share-pill ${locationShareStatusClass}`}>{locationShareStatusLabel}</span>
+                </div>
+                <button
+                  type="button"
+                  className="location-share-btn"
+                  onClick={() => void sendLocationSample(true)}
+                  disabled={locationShareStatus === "unavailable"}
+                >
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                    <path
+                      d="M12 2a7 7 0 0 0-7 7c0 4.18 4.55 10.22 6.22 12.3a1 1 0 0 0 1.56 0C14.45 19.22 19 13.18 19 9a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5Z"
+                      fill="currentColor"
+                    />
+                  </svg>
+                  <span>{locationShareStatus === "granted" ? "Refresh Location" : "Enable Location Sharing"}</span>
+                </button>
+                {lastLocationUpdateAt && (
+                  <p className="muted location-share-meta">
+                    Last update: {new Date(lastLocationUpdateAt).toLocaleTimeString()}
+                  </p>
+                )}
+                {locationShareMessage && <p className="error">{locationShareMessage}</p>}
+                {locationShareStatus === "denied" && (
+                  <p className="muted">If blocked, open browser site settings and set Location to Allow.</p>
+                )}
+              </div>
+            </>
+          )}
         </section>
 
         <section className="panel">
           <h2>Completed Quests</h2>
-          {!team && <p className="muted">Select team to see completed quests.</p>}
-          {team && completedForTeam.length === 0 && <p className="muted">No completed quests yet.</p>}
-          {team && completedForTeam.length > 0 && (
+          {!selectedTeam && <p className="muted">Join team with nickname to see completed quests.</p>}
+          {selectedTeam && completedForTeam.length === 0 && <p className="muted">No completed quests yet.</p>}
+          {selectedTeam && completedForTeam.length > 0 && (
             <ul className="quest-list">
               {completedForTeam.map((entry) => (
                 <li key={entry.id}>
@@ -468,8 +774,8 @@ export default function QuestApp() {
       <main className="main-panel">
         <section className="panel entry-panel">
           <h2>Complete Quest</h2>
-          {!team && <p className="muted">Select your team first, then enter a 6-digit payload.</p>}
-          {team && (
+          {!selectedTeam && <p className="muted">Nickname + team are required before entering payload.</p>}
+          {selectedTeam && (
             <>
               <p className="muted">Use mission payload (6 digits) to mark quest as completed.</p>
               <button type="button" onClick={() => setIsCodeModalOpen(true)}>
@@ -485,22 +791,25 @@ export default function QuestApp() {
               <h3>Loading game map...</h3>
             </div>
           )}
-          {!loadingGameState && !team && (
+          {!loadingGameState && !selectedTeam && (
             <div className="map-team-gate">
-              <h3>Select Team Participation</h3>
-              <p>Click on Team Participation button (RED or BLUE) to unlock the map.</p>
+              <h3>Join Team Participation</h3>
+              <p>Enter nickname and join RED or BLUE to unlock map and payload actions.</p>
             </div>
           )}
-          {!loadingGameState && team && (
+          {!loadingGameState && selectedTeam && (
             <MissionMap
               missions={state.missions}
               completions={state.completions}
+              players={state.players ?? []}
               mapMarkers={state.mapMarkers ?? []}
               mapShapes={state.mapShapes ?? []}
               mapSignals={state.mapSignals ?? []}
-              selectedTeam={team}
+              selectedTeam={selectedTeam}
               defaultCenter={defaultMapCenter}
               onCreateQuickSignal={createQuickSignal}
+              showCenterOnPlayerControl
+              currentPlayerLocation={player?.location ? { lat: player.location.lat, lng: player.location.lng } : null}
             />
           )}
         </section>

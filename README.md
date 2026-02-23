@@ -41,15 +41,19 @@ Admin can draw polygon overlays by picking multiple points on the map, then sett
 
 ## Supabase persistence setup
 
-This app now stores game state in Supabase instead of local files.
+This app now stores game state in Supabase using normalized tables instead of a single JSON blob.
 
-### 1. Create the table in Supabase
+### 1. Run Supabase migrations
 
-Run the SQL migration in your Supabase project:
+Run the SQL migrations in your Supabase project:
 
 - `supabase/migrations/20260219130000_create_game_state.sql`
+- `supabase/migrations/20260219142000_game_state_service_role_policy.sql`
+- `supabase/migrations/20260223083000_create_atomized_game_tables.sql`
 
 You can run it either in Supabase SQL Editor or with Supabase CLI migrations.
+
+The runtime now reads/writes `games`, `missions`, `mission_locations`, `completions`, `players`, `map_markers`, `map_shapes`, `map_shape_points`, and `map_signals`.
 
 ### 2. Configure environment variables
 
@@ -61,9 +65,9 @@ Set these server-side env vars (locally and on Vercel):
 `SUPABASE_SERVICE_ROLE_KEY` must stay server-only. Do not expose it in browser code.
 Use the service-role secret key (`sb_secret_*` or legacy `service_role` JWT), not `sb_publishable_*`.
 
-### 3. (Optional) Migrate existing local JSON data
+### 3. (Optional) Seed local JSON data
 
-To upload current `data/store.json` into Supabase:
+To upload current `data/store.json` into normalized Supabase tables:
 
 ```bash
 npm run seed:supabase
@@ -75,7 +79,7 @@ Or provide a custom source file:
 node scripts/seed-supabase-store.mjs ./path/to/store.json
 ```
 
-You can also provide explicit invite code for seeded data:
+You can also provide an explicit invite code for seeded data:
 
 ```bash
 node scripts/seed-supabase-store.mjs ./path/to/store.json A1B2C3

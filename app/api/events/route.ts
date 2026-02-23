@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { onState } from "@/lib/events";
 import { requireGameCodeFromRequest } from "@/lib/game-request";
 import { readState } from "@/lib/store";
+import { filterStateForViewer, resolveStateViewerFromRequest, resolveViewerTeamForSession } from "@/lib/state-visibility";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +26,17 @@ export async function GET(request: NextRequest) {
   const encoder = new TextEncoder();
   let keepAlive: ReturnType<typeof setInterval> | undefined;
   let unsubscribe: () => void = () => {};
+  const initialViewer = resolveStateViewerFromRequest(request, gameCode, initialState);
+  const visibleState = (state: typeof initialState) => {
+    if (initialViewer.isAdmin) {
+      return state;
+    }
+
+    return filterStateForViewer(state, {
+      ...initialViewer,
+      team: resolveViewerTeamForSession(state, initialViewer.sessionId)
+    });
+  };
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -33,10 +45,10 @@ export async function GET(request: NextRequest) {
       };
 
       send({ type: "connected" });
-      send({ type: "sync", state: initialState });
+      send({ type: "sync", state: visibleState(initialState) });
 
       unsubscribe = onState(gameCode, (event) => {
-        send({ type: event.type, state: event.state });
+        send({ type: event.type, state: visibleState(event.state) });
       });
 
       keepAlive = setInterval(() => {
