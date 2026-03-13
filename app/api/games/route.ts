@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { setAdminCookie } from "@/lib/admin-auth";
 import { generateGameCode, normalizeGameCode } from "@/lib/game-code";
 import { createGame, gameExists } from "@/lib/store";
 
@@ -37,9 +36,7 @@ export async function POST(request: NextRequest) {
   try {
     const gameCode = await resolveGameCode(payload.gameCode);
     const state = await createGame(gameCode);
-    const response = NextResponse.json({ ok: true, gameCode, state });
-    setAdminCookie(response, gameCode);
-    return response;
+    return NextResponse.json({ ok: true, gameCode, state });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Could not create game." },

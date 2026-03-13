@@ -1,28 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
-import { normalizeGameCode } from "@/lib/game-code";
-import { setAdminCookie, validateAdminPassword } from "@/lib/admin-auth";
-import { gameExists } from "@/lib/store";
+import { findAdminAccountByAuthUserId } from "@/lib/admin-accounts";
+import { recordAdminLogin, setAdminCookie } from "@/lib/admin-auth";
+import { signInWithSupabasePassword } from "@/lib/supabase-auth";
 
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
-  const payload = (await request.json()) as { password?: string; gameCode?: string };
-  const gameCode = normalizeGameCode(payload.gameCode ?? request.nextUrl.searchParams.get("game"));
+  const payload = (await request.json().catch(() => ({}))) as { email?: string; password?: string };
+  const email = payload.email?.trim().toLowerCase();
+  const password = payload.password ?? "";
 
-  if (!gameCode) {
-    return NextResponse.json({ error: "Valid game code is required." }, { status: 400 });
+  if (!email || !password) {
+    return NextResponse.json({ error: "Email and password are required." }, { status: 400 });
   }
 
-  const exists = await gameExists(gameCode);
-  if (!exists) {
-    return NextResponse.json({ error: "Game not found." }, { status: 404 });
-  }
+  try {
+    const signedIn = await signInWithSupabasePassword({ email, password });
+    const adminAccount = await findAdminAccountByAuthUserId(signedIn.userId);
+    if (!adminAccount || !adminAccount.active) {
+      return NextResponse.json({ error: "This user is not an active administrator." }, { status: 403 });
+    }
 
-  if (!payload.password || !validateAdminPassword(payload.password)) {
-    return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
-  }
+    const response = NextResponse.json({
+      ok: true,
+      admin: {
+        email: adminAccount.email,
+        role: adminAccount.role
+      }
+    });
 
-  const response = NextResponse.json({ ok: true });
-  setAdminCookie(response, gameCode);
-  return response;
+    setAdminCookie(response, {
+      userId: adminAccount.authUserId,
+      email: adminAccount.email,
+      role: adminAccount.role
+    });
+    await recordAdminLogin(adminAccount.authUserId);
+
+    return response;
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Invalid credentials." },
+      { status: 401 }
+    );
+  }
 }

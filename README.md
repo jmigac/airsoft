@@ -5,9 +5,17 @@ Online Airsoft Quest tracker with maps integration.
 ## Multi-game invite flow
 
 - Landing page now supports `Join Existing Game` and `Create New Game`.
+- Landing page now exposes a `Global Admin Dashboard` entry point.
 - Each game has its own invite code (`6` alphanumeric chars).
 - Missions, completions, default map center, tactical icons and map shapes are isolated per game.
 - Admin login/session is scoped to the selected game code.
+
+## Global admin dashboard
+
+- `/admin` now provides a global admin login and dashboard backed by real administrator accounts in Supabase Auth.
+- Global admins can inspect dashboard totals, manage game metadata, manage players across games, edit/delete markers for a selected game, manage administrator accounts, and review recent audit entries.
+- Selected game context can be deep-linked with `/admin?game=ABC123`.
+- The old shared `ADMIN_PASSWORD` login is no longer used by the dashboard.
 
 ## Time-critical missions (CET)
 
@@ -50,6 +58,8 @@ Run the SQL migrations in your Supabase project:
 - `supabase/migrations/20260219130000_create_game_state.sql`
 - `supabase/migrations/20260219142000_game_state_service_role_policy.sql`
 - `supabase/migrations/20260223083000_create_atomized_game_tables.sql`
+- `supabase/migrations/20260313120000_global_admin_dashboard.sql`
+- `supabase/migrations/20260313143000_admin_accounts.sql`
 
 You can run it either in Supabase SQL Editor or with Supabase CLI migrations.
 
@@ -59,13 +69,26 @@ The runtime now reads/writes `games`, `missions`, `mission_locations`, `completi
 
 Set these server-side env vars (locally and on Vercel):
 
-- `SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`)
+- `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_PUBLISHABLE_KEY`
 
 `SUPABASE_SERVICE_ROLE_KEY` must stay server-only. Do not expose it in browser code.
 Use the service-role secret key (`sb_secret_*` or legacy `service_role` JWT), not `sb_publishable_*`.
 
-### 3. (Optional) Seed local JSON data
+For admin sign-in, the app also needs a publishable/anon key so `/api/admin/login` can authenticate email/password credentials against Supabase Auth.
+
+### 3. Bootstrap the first administrator
+
+Create the first real dashboard account after migrations are applied:
+
+```bash
+npm run admin:create -- admin@example.com supersecret123
+```
+
+After the first admin can sign in at `/admin`, additional admins can be created from the dashboard.
+
+### 4. (Optional) Seed local JSON data
 
 To upload current `data/store.json` into normalized Supabase tables:
 
@@ -85,6 +108,6 @@ You can also provide an explicit invite code for seeded data:
 node scripts/seed-supabase-store.mjs ./path/to/store.json A1B2C3
 ```
 
-### 4. Deploy
+### 5. Deploy
 
 After env vars are set in Vercel, redeploy the app.

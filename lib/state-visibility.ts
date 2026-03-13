@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requestIsAdmin } from "./admin-auth";
 import { getPlayerSessionId } from "./player-session";
-import { GameState, Team } from "./types";
+import { GameState, MapMarker, Team } from "./types";
 
 export type StateViewer = {
   isAdmin: boolean;
@@ -17,8 +17,12 @@ export function resolveViewerTeamForSession(state: GameState, sessionId: string 
   return (state.players ?? []).find((entry) => entry.sessionId === sessionId)?.team ?? null;
 }
 
-export function resolveStateViewerFromRequest(request: NextRequest, gameCode: string, state: GameState): StateViewer {
-  const isAdmin = requestIsAdmin(request, gameCode);
+export async function resolveStateViewerFromRequest(
+  request: NextRequest,
+  gameCode: string,
+  state: GameState
+): Promise<StateViewer> {
+  const isAdmin = await requestIsAdmin(request, gameCode);
   const sessionId = getPlayerSessionId(request) ?? null;
   const team = isAdmin ? null : resolveViewerTeamForSession(state, sessionId);
 
@@ -32,9 +36,23 @@ export function resolveStateViewerFromRequest(request: NextRequest, gameCode: st
 export function filterStateForTeam(state: GameState, team: Team | null): GameState {
   return {
     ...state,
+    missionIntelUploads: [],
     players: team ? (state.players ?? []).filter((player) => player.team === team) : [],
-    mapSignals: team ? (state.mapSignals ?? []).filter((signal) => signal.team === team) : []
+    mapSignals: team ? (state.mapSignals ?? []).filter((signal) => signal.team === team) : [],
+    mapMarkers: (state.mapMarkers ?? []).filter((marker) => markerVisibleToTeam(marker, team))
   };
+}
+
+function markerVisibleToTeam(marker: MapMarker, team: Team | null) {
+  if (marker.visibility === "admins") {
+    return false;
+  }
+
+  if (marker.visibility === "selected_teams") {
+    return Boolean(team && (marker.visibleTeams ?? []).includes(team));
+  }
+
+  return true;
 }
 
 export function filterStateForViewer(state: GameState, viewer: StateViewer): GameState {

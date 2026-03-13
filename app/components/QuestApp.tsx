@@ -17,6 +17,7 @@ const MissionMap = dynamic(() => import("./MissionMap"), {
 const INITIAL_STATE: GameState = {
   missions: [],
   completions: [],
+  missionIntelUploads: [],
   players: [],
   defaultMapCenter: undefined,
   mapMarkers: [],
@@ -39,6 +40,10 @@ export default function QuestApp() {
   const [locationShareStatus, setLocationShareStatus] = useState<LocationShareStatus>("unknown");
   const [locationShareMessage, setLocationShareMessage] = useState<string | null>(null);
   const [lastLocationUpdateAt, setLastLocationUpdateAt] = useState<string | null>(null);
+  const [selectedIntelMissionId, setSelectedIntelMissionId] = useState("");
+  const [intelFiles, setIntelFiles] = useState<File[]>([]);
+  const [intelUploadBusy, setIntelUploadBusy] = useState(false);
+  const [intelUploadInputKey, setIntelUploadInputKey] = useState(0);
   const selectedTeam = player?.team ?? null;
   const playerId = player?.id ?? null;
 
@@ -70,6 +75,9 @@ export default function QuestApp() {
       setLocationShareStatus("unknown");
       setLocationShareMessage(null);
       setLastLocationUpdateAt(null);
+      setSelectedIntelMissionId("");
+      setIntelFiles([]);
+      setIntelUploadInputKey(0);
       return;
     }
   }, [gameCode]);
@@ -258,6 +266,33 @@ export default function QuestApp() {
     () => redeemCountsByTeam.red + redeemCountsByTeam.blue,
     [redeemCountsByTeam]
   );
+  const completedMissionIdsForSelectedTeam = useMemo(() => {
+    if (!selectedTeam) {
+      return new Set<string>();
+    }
+
+    return new Set(
+      state.completions.filter((completion) => completion.team === selectedTeam).map((completion) => completion.missionId)
+    );
+  }, [selectedTeam, state.completions]);
+  const intelRecoveryMissions = useMemo(
+    () =>
+      state.missions.filter(
+        (mission) => mission.type === "intel_recovery" && !completedMissionIdsForSelectedTeam.has(mission.id)
+      ),
+    [completedMissionIdsForSelectedTeam, state.missions]
+  );
+
+  useEffect(() => {
+    if (intelRecoveryMissions.length === 0) {
+      setSelectedIntelMissionId("");
+      return;
+    }
+
+    setSelectedIntelMissionId((current) =>
+      current && intelRecoveryMissions.some((mission) => mission.id === current) ? current : intelRecoveryMissions[0].id
+    );
+  }, [intelRecoveryMissions]);
 
   const defaultMapCenter = useMemo(
     () =>
@@ -304,30 +339,6 @@ export default function QuestApp() {
       selectGameCode(normalizedCode);
     } catch (joinError) {
       setError(joinError instanceof Error ? joinError.message : "Could not join game.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const createNewGame = async () => {
-    try {
-      setBusy(true);
-      setError(null);
-      const response = await fetch("/api/games", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({})
-      });
-      const payload = (await response.json().catch(() => ({}))) as { error?: string; gameCode?: string };
-
-      if (!response.ok || !payload.gameCode) {
-        throw new Error(payload.error ?? "Could not create game.");
-      }
-
-      setGameInput(payload.gameCode);
-      selectGameCode(payload.gameCode);
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "Could not create game.");
     } finally {
       setBusy(false);
     }
@@ -434,6 +445,60 @@ export default function QuestApp() {
     }
 
     setError(null);
+  };
+
+  const submitIntelRecovery = async () => {
+    if (!gameCode) {
+      setError("Join a game before uploading intel.");
+      return;
+    }
+
+    if (!player) {
+      setError("Nickname and team selection are required before uploading intel.");
+      return;
+    }
+
+    if (!selectedIntelMissionId) {
+      setError("Select an Intel Recovery mission first.");
+      return;
+    }
+
+    if (intelFiles.length === 0) {
+      setError("Choose at least one image to upload.");
+      return;
+    }
+
+    try {
+      setIntelUploadBusy(true);
+      const formData = new FormData();
+      formData.set("gameCode", gameCode);
+      formData.set("missionId", selectedIntelMissionId);
+      for (const file of intelFiles) {
+        formData.append("files", file);
+      }
+
+      const response = await fetch("/api/complete/intel", {
+        method: "POST",
+        body: formData
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; state?: GameState };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Intel upload failed.");
+      }
+
+      if (payload.state) {
+        setState(payload.state);
+      }
+
+      setIntelFiles([]);
+      setIntelUploadInputKey((current) => current + 1);
+      setError(null);
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "Intel upload failed.");
+    } finally {
+      setIntelUploadBusy(false);
+    }
   };
 
   const createQuickSignal = async (payload: { type: MapSignalType; lat: number; lng: number }) => {
@@ -600,7 +665,7 @@ export default function QuestApp() {
       <main className="landing-shell">
         <section className="panel landing-panel">
           <h1>Airsoft Quest Tracker</h1>
-          <p className="muted">Join an existing game with invite code or create your own game.</p>
+          <p className="muted">Join an existing game with an invite code. New games can be created only from the admin dashboard.</p>
 
           <input
             id="game-invite-code"
@@ -621,9 +686,9 @@ export default function QuestApp() {
             <button type="button" onClick={() => void joinGame()} disabled={busy}>
               {busy ? "Please wait..." : "Join Existing Game"}
             </button>
-            <button type="button" onClick={() => void createNewGame()} disabled={busy}>
-              {busy ? "Please wait..." : "Create New Game"}
-            </button>
+            <Link href="/admin" className="nav-link-btn">
+              Global Admin Dashboard
+            </Link>
           </div>
 
           <p className="muted">Each game has isolated missions, markers, shapes, and admin settings.</p>
@@ -641,7 +706,7 @@ export default function QuestApp() {
         <div className="sidebar-top">
           <h1>Airsoft Quest Tracker</h1>
           <Link href={adminHref} className="nav-link-btn">
-            Admin
+            Admin Dashboard
           </Link>
         </div>
 
@@ -777,10 +842,46 @@ export default function QuestApp() {
           {!selectedTeam && <p className="muted">Nickname + team are required before entering payload.</p>}
           {selectedTeam && (
             <>
-              <p className="muted">Use mission payload (6 digits) to mark quest as completed.</p>
-              <button type="button" onClick={() => setIsCodeModalOpen(true)}>
-                Enter Quest Payload
-              </button>
+              {state.missions.some((mission) => mission.type === "qr_payload") && (
+                <div className="entry-action-card">
+                  <p className="muted">Use mission payload (6 digits) to mark a QR mission as completed.</p>
+                  <button type="button" onClick={() => setIsCodeModalOpen(true)}>
+                    Enter Quest Payload
+                  </button>
+                </div>
+              )}
+
+              {intelRecoveryMissions.length > 0 && (
+                <div className="entry-action-card intel-upload-card">
+                  <div>
+                    <strong>Intel Recovery</strong>
+                    <p className="muted">Upload field photos of discovered intel. Successful image upload completes the mission.</p>
+                  </div>
+
+                  <select value={selectedIntelMissionId} onChange={(event) => setSelectedIntelMissionId(event.target.value)}>
+                    {intelRecoveryMissions.map((mission) => (
+                      <option key={mission.id} value={mission.id}>
+                        {mission.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <input
+                    key={intelUploadInputKey}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(event) => setIntelFiles(Array.from(event.target.files ?? []))}
+                  />
+
+                  <div className="inline-actions">
+                    <button type="button" onClick={() => void submitIntelRecovery()} disabled={intelUploadBusy}>
+                      {intelUploadBusy ? "Uploading..." : "Upload Intel Evidence"}
+                    </button>
+                    {intelFiles.length > 0 && <span className="muted">{intelFiles.length} file(s) selected</span>}
+                  </div>
+                </div>
+              )}
             </>
           )}
         </section>
@@ -810,6 +911,7 @@ export default function QuestApp() {
               onCreateQuickSignal={createQuickSignal}
               showCenterOnPlayerControl
               currentPlayerLocation={player?.location ? { lat: player.location.lat, lng: player.location.lng } : null}
+              showZoomControls={false}
             />
           )}
         </section>

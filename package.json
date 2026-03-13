@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "seed:supabase": "node scripts/seed-supabase-store.mjs"
+    "seed:supabase": "node scripts/seed-supabase-store.mjs",
+    "admin:create": "node scripts/create-admin-user.mjs"
   },
   "dependencies": {
     "@types/qrcode": "^1.5.6",

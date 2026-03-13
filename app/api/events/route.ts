@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
   const encoder = new TextEncoder();
   let keepAlive: ReturnType<typeof setInterval> | undefined;
   let unsubscribe: () => void = () => {};
-  const initialViewer = resolveStateViewerFromRequest(request, gameCode, initialState);
+  const initialViewer = await resolveStateViewerFromRequest(request, gameCode, initialState);
   const visibleState = (state: typeof initialState) => {
     if (initialViewer.isAdmin) {
       return state;
