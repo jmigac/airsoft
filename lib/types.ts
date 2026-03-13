@@ -2,6 +2,10 @@ export const TEAMS = ["red", "blue"] as const;
 
 export type Team = (typeof TEAMS)[number];
 
+export const GAME_STATUSES = ["draft", "scheduled", "active", "paused", "completed", "archived"] as const;
+
+export type GameStatus = (typeof GAME_STATUSES)[number];
+
 export type MissionLocation = {
   id: string;
   lat: number;
@@ -45,18 +49,38 @@ export type MapSignal = {
   expiresAt: string;
 };
 
-export const MAP_MARKER_TYPES = ["village", "north_spawn", "south_spawn", "house"] as const;
+export const MAP_MARKER_TYPES = [
+  "village",
+  "north_spawn",
+  "south_spawn",
+  "house",
+  "objective",
+  "checkpoint",
+  "spawn_point",
+  "extraction_point",
+  "danger_zone",
+  "custom"
+] as const;
 
 export type MapMarkerType = (typeof MAP_MARKER_TYPES)[number];
+
+export const MAP_MARKER_VISIBILITY = ["all", "admins", "selected_teams"] as const;
+
+export type MapMarkerVisibility = (typeof MAP_MARKER_VISIBILITY)[number];
 
 export type MapMarker = {
   id: string;
   type?: MapMarkerType;
   name: string;
+  description?: string;
+  icon?: string;
   color: string;
   lat: number;
   lng: number;
   createdAt: string;
+  updatedAt: string;
+  visibility: MapMarkerVisibility;
+  visibleTeams?: Team[];
 };
 
 export type MapShape = {
@@ -80,10 +104,15 @@ export type MissionTimeWindowCET = {
   endsAtCET: string;
 };
 
+export const MISSION_TYPES = ["qr_payload", "intel_recovery"] as const;
+
+export type MissionType = (typeof MISSION_TYPES)[number];
+
 export type Mission = {
   id: string;
   name: string;
-  qrCode: string;
+  type: MissionType;
+  qrCode?: string;
   mapCenter?: MapCenter;
   timeWindowCET?: MissionTimeWindowCET;
   locations: MissionLocation[];
@@ -94,13 +123,25 @@ export type Completion = {
   id: string;
   missionId: string;
   team: Team;
+  method: MissionType;
   completedAt: string;
-  qrCode: string;
+  qrCode?: string;
+};
+
+export type MissionIntelUpload = {
+  id: string;
+  missionId: string;
+  team: Team;
+  filename: string;
+  contentType: string;
+  dataUrl: string;
+  uploadedAt: string;
 };
 
 export type GameState = {
   missions: Mission[];
   completions: Completion[];
+  missionIntelUploads?: MissionIntelUpload[];
   players?: GamePlayer[];
   defaultMapCenter?: MapCenter;
   mapMarkers?: MapMarker[];

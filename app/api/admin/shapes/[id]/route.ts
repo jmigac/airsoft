@@ -17,7 +17,7 @@ export async function DELETE(
   }
 
   const gameCode = game.gameCode;
-  if (!requestIsAdmin(request, gameCode)) {
+  if (!(await requestIsAdmin(request, gameCode))) {
     return NextResponse.json({ error: "Admin privileges required" }, { status: 401 });
   }
 

@@ -11,5 +11,5 @@ export async function GET(request: NextRequest) {
     return game.response;
   }
 
-  return NextResponse.json({ admin: requestIsAdmin(request, game.gameCode) });
+  return NextResponse.json({ admin: await requestIsAdmin(request, game.gameCode) });
 }

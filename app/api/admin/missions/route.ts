@@ -5,12 +5,14 @@ import { requireGameCodeFromRequest } from "@/lib/game-request";
 import { isValidCETDateTime, normalizeCETDateTimeInput } from "@/lib/mission-time";
 import { isValidQuestPayload } from "@/lib/payload";
 import { updateState } from "@/lib/store";
+import { MissionType } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type CreateMissionPayload = {
   name?: string;
+  type?: MissionType;
   qrCode?: string;
   mapCenter?: { lat?: number; lng?: number };
   timeWindowCET?: { startsAtCET?: string; endsAtCET?: string };
@@ -24,24 +26,29 @@ export async function POST(request: NextRequest) {
   }
 
   const gameCode = game.gameCode;
-  if (!requestIsAdmin(request, gameCode)) {
+  if (!(await requestIsAdmin(request, gameCode))) {
     return NextResponse.json({ error: "Admin privileges required" }, { status: 401 });
   }
 
   const payload = (await request.json()) as CreateMissionPayload;
   const name = payload.name?.trim();
-  const qrCode = payload.qrCode?.trim();
+  const missionType = payload.type === "intel_recovery" ? "intel_recovery" : "qr_payload";
+  const qrCode = payload.qrCode?.trim() ?? "";
   const mapCenter = payload.mapCenter;
   const startsAtCET = normalizeCETDateTimeInput(payload.timeWindowCET?.startsAtCET ?? "");
   const endsAtCET = normalizeCETDateTimeInput(payload.timeWindowCET?.endsAtCET ?? "");
   const hasTimeWindow = startsAtCET.length > 0 || endsAtCET.length > 0;
   const locations = payload.locations ?? [];
 
-  if (!name || !qrCode) {
-    return NextResponse.json({ error: "Mission name and payload are required." }, { status: 400 });
+  if (!name) {
+    return NextResponse.json({ error: "Mission name is required." }, { status: 400 });
   }
 
-  if (!isValidQuestPayload(qrCode)) {
+  if (missionType === "qr_payload" && !qrCode) {
+    return NextResponse.json({ error: "Mission payload is required for QR missions." }, { status: 400 });
+  }
+
+  if (missionType === "qr_payload" && !isValidQuestPayload(qrCode)) {
     return NextResponse.json(
       { error: "Quest payload must be exactly 6 digits." },
       { status: 400 }
@@ -93,7 +100,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const state = await updateState(gameCode, (current) => {
-      if (current.missions.some((mission) => mission.qrCode === qrCode)) {
+      if (missionType === "qr_payload" && current.missions.some((mission) => mission.qrCode === qrCode)) {
         throw new Error("A mission with this payload already exists.");
       }
 
@@ -104,7 +111,8 @@ export async function POST(request: NextRequest) {
           {
             id: crypto.randomUUID(),
             name,
-            qrCode,
+            type: missionType,
+            qrCode: missionType === "qr_payload" ? qrCode : undefined,
             mapCenter: mapCenter
               ? {
                   lat: Number(mapCenter.lat),

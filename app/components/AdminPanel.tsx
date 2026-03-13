@@ -240,6 +240,9 @@ export default function AdminPanel({
         const nextPreviews: Record<string, string> = {};
 
         for (const mission of missions) {
+          if (!mission.qrCode) {
+            continue;
+          }
           const revealUrl = `${appOrigin}${buildPinRevealPath(mission.qrCode, gameCode)}`;
           nextPreviews[mission.id] = await qr.toDataURL(revealUrl, {
             width: 150,
@@ -1082,8 +1085,8 @@ export default function AdminPanel({
         {missions.length > 0 && (
           <ul className="mission-list">
             {missions.map((mission) => {
-              const endpoint = appOrigin ? `${appOrigin}${buildTriggerPath(mission.qrCode, gameCode)}` : "";
-              const revealUrl = appOrigin ? `${appOrigin}${buildPinRevealPath(mission.qrCode, gameCode)}` : "";
+              const endpoint = appOrigin && mission.qrCode ? `${appOrigin}${buildTriggerPath(mission.qrCode, gameCode)}` : "";
+              const revealUrl = appOrigin && mission.qrCode ? `${appOrigin}${buildPinRevealPath(mission.qrCode, gameCode)}` : "";
               const qrPreview = missionQrPreviews[mission.id];
               const fallbackCenter = mission.locations[0]
                 ? { lat: mission.locations[0].lat, lng: mission.locations[0].lng }
@@ -1107,7 +1110,7 @@ export default function AdminPanel({
 
                   <div className="endpoint-box">
                     <span className="muted">Payload:</span>
-                    <code>{mission.qrCode}</code>
+                    <code>{mission.qrCode ?? "Image upload evidence"}</code>
                   </div>
 
                   {mission.mapCenter && (
@@ -1144,9 +1147,11 @@ export default function AdminPanel({
                   )}
 
                   <div className="inline-actions">
-                    <button type="button" onClick={() => void copyText(mission.qrCode)}>
-                      Copy Payload
-                    </button>
+                    {mission.qrCode && (
+                      <button type="button" onClick={() => void copyText(mission.qrCode ?? "")}>
+                        Copy Payload
+                      </button>
+                    )}
                     <button type="button" onClick={() => void copyText(revealUrl)} disabled={!revealUrl}>
                       Copy QR URL
                     </button>

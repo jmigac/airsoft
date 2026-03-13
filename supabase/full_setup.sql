@@ -42,6 +42,13 @@ create table if not exists public.games (
   updated_at timestamptz not null default timezone('utc', now())
 );
 
+alter table public.games
+add column if not exists name text not null default 'Untitled Game',
+add column if not exists description text,
+add column if not exists status text not null default 'active',
+add column if not exists map_reference text,
+add column if not exists creation_metadata jsonb not null default '{}'::jsonb;
+
 create or replace function public.set_games_updated_at()
 returns trigger
 language plpgsql
@@ -59,11 +66,34 @@ before update on public.games
 for each row
 execute function public.set_games_updated_at();
 
+create or replace function public.set_map_markers_updated_at()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $$
+begin
+  new.updated_at = timezone('utc', now());
+  return new;
+end;
+$$;
+
+create or replace function public.set_admin_users_updated_at()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $$
+begin
+  new.updated_at = timezone('utc', now());
+  return new;
+end;
+$$;
+
 create table if not exists public.missions (
   id text primary key,
   game_code text not null references public.games(code) on delete cascade,
   name text not null,
-  qr_code text not null,
+  type text not null default 'qr_payload' check (type in ('qr_payload', 'intel_recovery')),
+  qr_code text,
   map_center_lat double precision,
   map_center_lng double precision,
   time_window_starts_at_cet text,
@@ -87,9 +117,21 @@ create table if not exists public.completions (
   game_code text not null references public.games(code) on delete cascade,
   mission_id text not null references public.missions(id) on delete cascade,
   team text not null check (team in ('red', 'blue')),
-  qr_code text not null,
+  method text not null default 'qr_payload' check (method in ('qr_payload', 'intel_recovery')),
+  qr_code text,
   completed_at timestamptz not null,
   unique (game_code, mission_id, team)
+);
+
+create table if not exists public.mission_intel_uploads (
+  id text primary key,
+  game_code text not null references public.games(code) on delete cascade,
+  mission_id text not null references public.missions(id) on delete cascade,
+  team text not null check (team in ('red', 'blue')),
+  filename text not null,
+  content_type text not null,
+  data_url text not null,
+  uploaded_at timestamptz not null default timezone('utc', now())
 );
 
 create table if not exists public.players (
@@ -121,6 +163,13 @@ create table if not exists public.map_markers (
   check (type is null or type in ('village', 'north_spawn', 'south_spawn', 'house'))
 );
 
+alter table public.map_markers
+add column if not exists description text,
+add column if not exists icon text,
+add column if not exists updated_at timestamptz not null default timezone('utc', now()),
+add column if not exists visibility_scope text not null default 'all',
+add column if not exists visibility_teams text[];
+
 create table if not exists public.map_shapes (
   id text primary key,
   game_code text not null references public.games(code) on delete cascade,
@@ -150,15 +199,95 @@ create table if not exists public.map_signals (
   expires_at timestamptz not null
 );
 
+create table if not exists public.admin_audit_log (
+  id text primary key,
+  action text not null,
+  entity_type text not null,
+  entity_id text,
+  game_code text references public.games(code) on delete set null,
+  message text not null,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.admin_users (
+  id uuid primary key default gen_random_uuid(),
+  auth_user_id uuid not null unique,
+  email text not null unique,
+  role text not null default 'global_admin',
+  active boolean not null default true,
+  last_login_at timestamptz,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+alter table public.games
+drop constraint if exists games_status_check;
+
+alter table public.games
+add constraint games_status_check
+check (status in ('draft', 'scheduled', 'active', 'paused', 'completed', 'archived'));
+
+alter table public.map_markers
+drop constraint if exists map_markers_type_check;
+
+alter table public.map_markers
+add constraint map_markers_type_check
+check (
+  type is null or type in (
+    'village',
+    'north_spawn',
+    'south_spawn',
+    'house',
+    'objective',
+    'checkpoint',
+    'spawn_point',
+    'extraction_point',
+    'danger_zone',
+    'custom'
+  )
+);
+
+alter table public.map_markers
+drop constraint if exists map_markers_visibility_scope_check;
+
+alter table public.map_markers
+add constraint map_markers_visibility_scope_check
+check (visibility_scope in ('all', 'admins', 'selected_teams'));
+
+alter table public.admin_users
+drop constraint if exists admin_users_role_check;
+
+alter table public.admin_users
+add constraint admin_users_role_check
+check (role in ('global_admin'));
+
+drop trigger if exists trg_map_markers_updated_at on public.map_markers;
+create trigger trg_map_markers_updated_at
+before update on public.map_markers
+for each row
+execute function public.set_map_markers_updated_at();
+
+drop trigger if exists trg_admin_users_updated_at on public.admin_users;
+create trigger trg_admin_users_updated_at
+before update on public.admin_users
+for each row
+execute function public.set_admin_users_updated_at();
+
 -- Indexes
 create index if not exists idx_missions_game_code on public.missions(game_code);
 create index if not exists idx_mission_locations_game_code_mission on public.mission_locations(game_code, mission_id, sort_order);
 create index if not exists idx_completions_game_code on public.completions(game_code, completed_at);
+create index if not exists idx_mission_intel_uploads_game_code on public.mission_intel_uploads(game_code, uploaded_at);
 create index if not exists idx_players_game_code on public.players(game_code, last_seen_at);
 create index if not exists idx_map_markers_game_code on public.map_markers(game_code, created_at);
 create index if not exists idx_map_shapes_game_code on public.map_shapes(game_code, created_at);
 create index if not exists idx_map_shape_points_game_code_shape on public.map_shape_points(game_code, shape_id, point_index);
 create index if not exists idx_map_signals_game_code_expires on public.map_signals(game_code, expires_at);
+create index if not exists idx_games_status_created_at on public.games(status, created_at desc);
+create index if not exists idx_admin_audit_log_created_at on public.admin_audit_log(created_at desc);
+create index if not exists idx_admin_audit_log_game_code on public.admin_audit_log(game_code, created_at desc);
+create index if not exists idx_admin_users_active on public.admin_users(active, role);
 
 -- Service role grants
 grant usage on schema public to service_role;
@@ -167,11 +296,14 @@ grant select, insert, update, delete on table public.games to service_role;
 grant select, insert, update, delete on table public.missions to service_role;
 grant select, insert, update, delete on table public.mission_locations to service_role;
 grant select, insert, update, delete on table public.completions to service_role;
+grant select, insert, update, delete on table public.mission_intel_uploads to service_role;
 grant select, insert, update, delete on table public.players to service_role;
 grant select, insert, update, delete on table public.map_markers to service_role;
 grant select, insert, update, delete on table public.map_shapes to service_role;
 grant select, insert, update, delete on table public.map_shape_points to service_role;
 grant select, insert, update, delete on table public.map_signals to service_role;
+grant select, insert, update, delete on table public.admin_audit_log to service_role;
+grant select, insert, update, delete on table public.admin_users to service_role;
 
 -- RLS
 alter table public.game_state enable row level security;
@@ -179,11 +311,14 @@ alter table public.games enable row level security;
 alter table public.missions enable row level security;
 alter table public.mission_locations enable row level security;
 alter table public.completions enable row level security;
+alter table public.mission_intel_uploads enable row level security;
 alter table public.players enable row level security;
 alter table public.map_markers enable row level security;
 alter table public.map_shapes enable row level security;
 alter table public.map_shape_points enable row level security;
 alter table public.map_signals enable row level security;
+alter table public.admin_audit_log enable row level security;
+alter table public.admin_users enable row level security;
 
 -- Policies
 
@@ -227,6 +362,14 @@ to service_role
 using (true)
 with check (true);
 
+drop policy if exists "mission_intel_uploads_service_role_all" on public.mission_intel_uploads;
+create policy "mission_intel_uploads_service_role_all"
+on public.mission_intel_uploads
+for all
+to service_role
+using (true)
+with check (true);
+
 drop policy if exists "players_service_role_all" on public.players;
 create policy "players_service_role_all"
 on public.players
@@ -262,6 +405,22 @@ with check (true);
 drop policy if exists "map_signals_service_role_all" on public.map_signals;
 create policy "map_signals_service_role_all"
 on public.map_signals
+for all
+to service_role
+using (true)
+with check (true);
+
+drop policy if exists "admin_audit_log_service_role_all" on public.admin_audit_log;
+create policy "admin_audit_log_service_role_all"
+on public.admin_audit_log
+for all
+to service_role
+using (true)
+with check (true);
+
+drop policy if exists "admin_users_service_role_all" on public.admin_users;
+create policy "admin_users_service_role_all"
+on public.admin_users
 for all
 to service_role
 using (true)

@@ -3,10 +3,10 @@ import { isMapMarkerType, MAP_MARKER_META, normalizeMarkerColor } from "./map-ma
 import { isMapSignalType } from "./map-signals";
 import { normalizeGameCode } from "./game-code";
 import { toNicknameLookupKey } from "./player-utils";
-import { GameState, Team } from "./types";
+import { GameState, MapMarkerVisibility, MissionType, Team } from "./types";
 
 const MAX_UPDATE_RETRIES = 8;
-const SUPABASE_URL = (process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "");
+const SUPABASE_URL = (process.env.SUPABASE_URL ?? "").replace(/\/+$/, "");
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
 type GameRow = {
@@ -20,7 +20,8 @@ type MissionRow = {
   id: string;
   game_code: string;
   name: string;
-  qr_code: string;
+  type: string | null;
+  qr_code: string | null;
   map_center_lat: number | null;
   map_center_lng: number | null;
   time_window_starts_at_cet: string | null;
@@ -43,8 +44,20 @@ type CompletionRow = {
   game_code: string;
   mission_id: string;
   team: string;
-  qr_code: string;
+  method: string | null;
+  qr_code: string | null;
   completed_at: string;
+};
+
+type MissionIntelUploadRow = {
+  id: string;
+  game_code: string;
+  mission_id: string;
+  team: string;
+  filename: string;
+  content_type: string;
+  data_url: string;
+  uploaded_at: string;
 };
 
 type PlayerRow = {
@@ -67,10 +80,15 @@ type MapMarkerRow = {
   game_code: string;
   type: string | null;
   name: string;
+  description: string | null;
+  icon: string | null;
   color: string;
   lat: number;
   lng: number;
   created_at: string;
+  updated_at: string | null;
+  visibility_scope: string | null;
+  visibility_teams: string[] | null;
 };
 
 type MapShapeRow = {
@@ -105,6 +123,7 @@ function createInitialState(): GameState {
   return {
     missions: [],
     completions: [],
+    missionIntelUploads: [],
     players: [],
     defaultMapCenter: undefined,
     mapMarkers: [],
@@ -115,6 +134,18 @@ function createInitialState(): GameState {
 
 function asTeam(value: unknown): Team | null {
   return value === "red" || value === "blue" ? value : null;
+}
+
+function asMarkerVisibility(value: unknown): MapMarkerVisibility {
+  if (value === "admins" || value === "selected_teams") {
+    return value;
+  }
+
+  return "all";
+}
+
+function asMissionType(value: unknown): MissionType {
+  return value === "intel_recovery" ? "intel_recovery" : "qr_payload";
 }
 
 function normalizeIsoTimestamp(value: unknown, fallback: string): string {
@@ -184,7 +215,8 @@ function normalizeState(value: unknown): GameState {
           return {
             id: mission.id,
             name: typeof mission.name === "string" && mission.name.trim().length > 0 ? mission.name.trim() : "Mission",
-            qrCode: typeof mission.qrCode === "string" ? mission.qrCode.trim() : "",
+            type: asMissionType(mission.type),
+            qrCode: typeof mission.qrCode === "string" && mission.qrCode.trim().length > 0 ? mission.qrCode.trim() : undefined,
             mapCenter,
             timeWindowCET,
             createdAt: normalizeIsoTimestamp(mission.createdAt, nowIso),
@@ -207,8 +239,36 @@ function normalizeState(value: unknown): GameState {
           id: completion.id,
           missionId: completion.missionId,
           team: asTeam(completion.team) ?? "red",
-          qrCode: typeof completion.qrCode === "string" ? completion.qrCode.trim() : "",
+          method: asMissionType(completion.method),
+          qrCode:
+            typeof completion.qrCode === "string" && completion.qrCode.trim().length > 0
+              ? completion.qrCode.trim()
+              : undefined,
           completedAt: normalizeIsoTimestamp(completion.completedAt, nowIso)
+        }))
+    : [];
+
+  const missionIntelUploads = Array.isArray(candidate.missionIntelUploads)
+    ? candidate.missionIntelUploads
+        .filter(
+          (upload) =>
+            upload &&
+            typeof upload === "object" &&
+            typeof upload.id === "string" &&
+            typeof upload.missionId === "string" &&
+            asTeam(upload.team) !== null &&
+            typeof upload.filename === "string" &&
+            typeof upload.contentType === "string" &&
+            typeof upload.dataUrl === "string"
+        )
+        .map((upload) => ({
+          id: upload.id,
+          missionId: upload.missionId,
+          team: asTeam(upload.team) ?? "red",
+          filename: upload.filename.trim() || "intel-image",
+          contentType: upload.contentType.trim() || "application/octet-stream",
+          dataUrl: upload.dataUrl,
+          uploadedAt: normalizeIsoTimestamp(upload.uploadedAt, nowIso)
         }))
     : [];
 
@@ -285,10 +345,23 @@ function normalizeState(value: unknown): GameState {
               typeof marker.name === "string" && marker.name.trim().length > 0
                 ? marker.name.trim()
                 : fallback?.label ?? "Marker",
+            description:
+              typeof marker.description === "string" && marker.description.trim().length > 0
+                ? marker.description.trim()
+                : undefined,
+            icon: typeof marker.icon === "string" && marker.icon.trim().length > 0 ? marker.icon.trim() : undefined,
             color: color ?? fallback?.color ?? "#5f676c",
             lat: Number(marker.lat),
             lng: Number(marker.lng),
-            createdAt: normalizeIsoTimestamp(marker.createdAt, nowIso)
+            createdAt: normalizeIsoTimestamp(marker.createdAt, nowIso),
+            updatedAt: normalizeIsoTimestamp(
+              typeof marker.updatedAt === "string" ? marker.updatedAt : marker.createdAt,
+              nowIso
+            ),
+            visibility: asMarkerVisibility(marker.visibility),
+            visibleTeams: Array.isArray(marker.visibleTeams)
+              ? marker.visibleTeams.map((team) => asTeam(team)).filter((team): team is Team => team !== null)
+              : undefined
           };
         })
     : [];
@@ -355,6 +428,7 @@ function normalizeState(value: unknown): GameState {
   return {
     missions,
     completions,
+    missionIntelUploads,
     players,
     defaultMapCenter,
     mapMarkers,
@@ -366,7 +440,7 @@ function normalizeState(value: unknown): GameState {
 function assertSupabaseConfig() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error(
-      "Supabase is not configured. Set SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY."
+      "Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY."
     );
   }
 
@@ -478,13 +552,22 @@ async function readStateWithVersion(gameCode: string): Promise<{ state: GameStat
   }
 
   const nowIso = new Date().toISOString();
-  const [missionRows, locationRows, completionRows, playerRows, markerRows, shapeRows, shapePointRows, signalRows] =
-    await Promise.all([
+  const [
+    missionRows,
+    locationRows,
+    completionRows,
+    uploadRows,
+    playerRows,
+    markerRows,
+    shapeRows,
+    shapePointRows,
+    signalRows
+  ] = await Promise.all([
       fetchRows<MissionRow>(
         "missions",
         new URLSearchParams({
           select:
-            "id,game_code,name,qr_code,map_center_lat,map_center_lng,time_window_starts_at_cet,time_window_ends_at_cet,created_at",
+            "id,game_code,name,type,qr_code,map_center_lat,map_center_lng,time_window_starts_at_cet,time_window_ends_at_cet,created_at",
           game_code: `eq.${gameCode}`,
           order: "created_at.asc"
         })
@@ -500,9 +583,17 @@ async function readStateWithVersion(gameCode: string): Promise<{ state: GameStat
       fetchRows<CompletionRow>(
         "completions",
         new URLSearchParams({
-          select: "id,game_code,mission_id,team,qr_code,completed_at",
+          select: "id,game_code,mission_id,team,method,qr_code,completed_at",
           game_code: `eq.${gameCode}`,
           order: "completed_at.asc"
+        })
+      ),
+      fetchRows<MissionIntelUploadRow>(
+        "mission_intel_uploads",
+        new URLSearchParams({
+          select: "id,game_code,mission_id,team,filename,content_type,data_url,uploaded_at",
+          game_code: `eq.${gameCode}`,
+          order: "uploaded_at.asc"
         })
       ),
       fetchRows<PlayerRow>(
@@ -517,7 +608,8 @@ async function readStateWithVersion(gameCode: string): Promise<{ state: GameStat
       fetchRows<MapMarkerRow>(
         "map_markers",
         new URLSearchParams({
-          select: "id,game_code,type,name,color,lat,lng,created_at",
+          select:
+            "id,game_code,type,name,description,icon,color,lat,lng,created_at,updated_at,visibility_scope,visibility_teams",
           game_code: `eq.${gameCode}`,
           order: "created_at.asc"
         })
@@ -576,7 +668,8 @@ async function readStateWithVersion(gameCode: string): Promise<{ state: GameStat
       .map((row) => ({
         id: row.id,
         name: row.name,
-        qrCode: row.qr_code,
+        type: asMissionType(row.type),
+        qrCode: typeof row.qr_code === "string" && row.qr_code.trim().length > 0 ? row.qr_code : undefined,
         mapCenter:
           Number.isFinite(row.map_center_lat) && Number.isFinite(row.map_center_lng)
             ? {
@@ -609,12 +702,32 @@ async function readStateWithVersion(gameCode: string): Promise<{ state: GameStat
           id: row.id,
           missionId: row.mission_id,
           team,
-          qrCode: row.qr_code,
+          method: asMissionType(row.method),
+          qrCode: typeof row.qr_code === "string" && row.qr_code.trim().length > 0 ? row.qr_code : undefined,
           completedAt: normalizeIsoTimestamp(row.completed_at, nowIso)
         };
       })
       .filter((row): row is NonNullable<typeof row> => row !== null)
       .sort((a, b) => a.completedAt.localeCompare(b.completedAt)),
+    missionIntelUploads: uploadRows
+      .map((row) => {
+        const team = asTeam(row.team);
+        if (!team) {
+          return null;
+        }
+
+        return {
+          id: row.id,
+          missionId: row.mission_id,
+          team,
+          filename: row.filename,
+          contentType: row.content_type,
+          dataUrl: row.data_url,
+          uploadedAt: normalizeIsoTimestamp(row.uploaded_at, nowIso)
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((a, b) => a.uploadedAt.localeCompare(b.uploadedAt)),
     players: playerRows
       .map((row) => {
         const team = asTeam(row.team);
@@ -664,10 +777,18 @@ async function readStateWithVersion(gameCode: string): Promise<{ state: GameStat
           id: row.id,
           type: markerType,
           name: typeof row.name === "string" && row.name.trim().length > 0 ? row.name.trim() : fallback?.label ?? "Marker",
+          description:
+            typeof row.description === "string" && row.description.trim().length > 0 ? row.description.trim() : undefined,
+          icon: typeof row.icon === "string" && row.icon.trim().length > 0 ? row.icon.trim() : undefined,
           color: normalizeMarkerColor(row.color) ?? fallback?.color ?? "#5f676c",
           lat: Number(row.lat),
           lng: Number(row.lng),
-          createdAt: normalizeIsoTimestamp(row.created_at, nowIso)
+          createdAt: normalizeIsoTimestamp(row.created_at, nowIso),
+          updatedAt: normalizeIsoTimestamp(row.updated_at ?? row.created_at, nowIso),
+          visibility: asMarkerVisibility(row.visibility_scope),
+          visibleTeams: Array.isArray(row.visibility_teams)
+            ? row.visibility_teams.map((team) => asTeam(team)).filter((team): team is Team => team !== null)
+            : undefined
         };
       })
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
@@ -740,6 +861,7 @@ async function setGameCenterAndVersion(
 
 async function replaceGameCollections(gameCode: string, nextState: GameState): Promise<void> {
   await deleteByGameCode("mission_locations", gameCode);
+  await deleteByGameCode("mission_intel_uploads", gameCode);
   await deleteByGameCode("completions", gameCode);
   await deleteByGameCode("missions", gameCode);
   await deleteByGameCode("map_shape_points", gameCode);
@@ -752,7 +874,8 @@ async function replaceGameCollections(gameCode: string, nextState: GameState): P
     id: mission.id,
     game_code: gameCode,
     name: mission.name,
-    qr_code: mission.qrCode,
+    type: mission.type,
+    qr_code: mission.qrCode ?? null,
     map_center_lat: mission.mapCenter ? Number(mission.mapCenter.lat) : null,
     map_center_lng: mission.mapCenter ? Number(mission.mapCenter.lng) : null,
     time_window_starts_at_cet: mission.timeWindowCET?.startsAtCET ?? null,
@@ -777,8 +900,20 @@ async function replaceGameCollections(gameCode: string, nextState: GameState): P
     game_code: gameCode,
     mission_id: completion.missionId,
     team: completion.team,
-    qr_code: completion.qrCode,
+    method: completion.method,
+    qr_code: completion.qrCode ?? null,
     completed_at: completion.completedAt
+  }));
+
+  const missionIntelUploadRows = (nextState.missionIntelUploads ?? []).map((upload) => ({
+    id: upload.id,
+    game_code: gameCode,
+    mission_id: upload.missionId,
+    team: upload.team,
+    filename: upload.filename,
+    content_type: upload.contentType,
+    data_url: upload.dataUrl,
+    uploaded_at: upload.uploadedAt
   }));
 
   const playerRows = (nextState.players ?? []).map((player) => ({
@@ -801,10 +936,16 @@ async function replaceGameCollections(gameCode: string, nextState: GameState): P
     game_code: gameCode,
     type: marker.type ?? null,
     name: marker.name,
+    description: marker.description?.trim() || null,
+    icon: marker.icon?.trim() || null,
     color: normalizeMarkerColor(marker.color) ?? "#5f676c",
     lat: Number(marker.lat),
     lng: Number(marker.lng),
-    created_at: marker.createdAt
+    created_at: marker.createdAt,
+    updated_at: marker.updatedAt,
+    visibility_scope: marker.visibility,
+    visibility_teams:
+      marker.visibility === "selected_teams" ? (marker.visibleTeams ?? []).filter((team) => asTeam(team) !== null) : null
   }));
 
   const shapeRows = (nextState.mapShapes ?? []).map((shape) => ({
@@ -843,6 +984,7 @@ async function replaceGameCollections(gameCode: string, nextState: GameState): P
   await insertRows("missions", missionRows);
   await insertRows("mission_locations", missionLocationRows);
   await insertRows("completions", completionRows);
+  await insertRows("mission_intel_uploads", missionIntelUploadRows);
   await insertRows("players", playerRows);
   await insertRows("map_markers", markerRows);
   await insertRows("map_shapes", shapeRows);

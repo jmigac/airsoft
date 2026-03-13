@@ -20,7 +20,7 @@ export async function PATCH(request: NextRequest) {
     return game.response;
   }
 
-  if (!requestIsAdmin(request, game.gameCode)) {
+  if (!(await requestIsAdmin(request, game.gameCode))) {
     return NextResponse.json({ error: "Admin privileges required" }, { status: 401 });
   }
 

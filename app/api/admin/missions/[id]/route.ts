@@ -17,7 +17,7 @@ export async function DELETE(
   }
 
   const gameCode = game.gameCode;
-  if (!requestIsAdmin(request, gameCode)) {
+  if (!(await requestIsAdmin(request, gameCode))) {
     return NextResponse.json({ error: "Admin privileges required" }, { status: 401 });
   }
 
@@ -34,7 +34,8 @@ export async function DELETE(
       return {
         ...current,
         missions: current.missions.filter((mission) => mission.id !== missionId),
-        completions: current.completions.filter((completion) => completion.missionId !== missionId)
+        completions: current.completions.filter((completion) => completion.missionId !== missionId),
+        missionIntelUploads: (current.missionIntelUploads ?? []).filter((upload) => upload.missionId !== missionId)
       };
     });
 

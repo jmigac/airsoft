@@ -16,6 +16,7 @@ import {
   useMapEvents
 } from "react-leaflet";
 import { MAP_SIGNAL_META, MAP_SIGNAL_DURATION_MS } from "@/lib/map-signals";
+import { getMarkerIconOption, MAP_MARKER_META } from "@/lib/map-markers";
 import { formatCETDateTime, isMissionExpired } from "@/lib/mission-time";
 import {
   Completion,
@@ -46,6 +47,7 @@ type Props = {
   draftShape?: MapShapeDraft | null;
   showCenterOnPlayerControl?: boolean;
   currentPlayerLocation?: MapCenter | null;
+  showZoomControls?: boolean;
 };
 
 type SignalGestureMenu = {
@@ -208,7 +210,8 @@ export default function MissionMap({
   centerOverride = null,
   draftShape = null,
   showCenterOnPlayerControl = false,
-  currentPlayerLocation = null
+  currentPlayerLocation = null,
+  showZoomControls = true
 }: Props) {
   const [now, setNow] = useState(() => new Date());
   const [signalGestureMenu, setSignalGestureMenu] = useState<SignalGestureMenu | null>(null);
@@ -331,10 +334,16 @@ export default function MissionMap({
     () =>
       mapMarkers.reduce<Record<string, ReturnType<typeof divIcon>>>((icons, marker) => {
         const markerText = marker.name.trim() || "Marker";
-        const markerWidth = Math.max(28, Math.ceil(markerText.length * 8.2) + 18);
+        const iconGlyph =
+          getMarkerIconOption(marker.icon)?.glyph ??
+          (marker.type ? getMarkerIconOption(MAP_MARKER_META[marker.type].iconToken)?.glyph : null) ??
+          null;
+        const markerWidth = Math.max(46, Math.ceil(markerText.length * 8.2) + (iconGlyph ? 42 : 18));
         icons[marker.id] = divIcon({
           className: "military-marker-wrapper",
-          html: `<span class="military-marker-badge" style="background:${marker.color};">${escapeHtml(markerText)}</span>`,
+          html: `<span class="military-marker-badge" style="background:${marker.color};">${
+            iconGlyph ? `<span class="military-marker-glyph">${escapeHtml(iconGlyph)}</span>` : ""
+          }<span>${escapeHtml(markerText)}</span></span>`,
           iconSize: [markerWidth, 28],
           iconAnchor: [Math.round(markerWidth / 2), 14]
         });
@@ -659,6 +668,7 @@ export default function MissionMap({
         zoom={19}
         className={`map-root ${signalGestureMenu ? "signal-picker-open" : ""}`}
         scrollWheelZoom
+        zoomControl={showZoomControls}
       >
         <TileLayer
           attribution="Tiles &copy; Esri"
@@ -789,12 +799,20 @@ export default function MissionMap({
                 <Popup>
                   <strong>{mission.name}</strong>
                   <br />
+                  Type: {mission.type === "intel_recovery" ? "Intel Recovery" : "QR Mission"}
+                  <br />
                   Radius: {location.radius}m
                   {mission.timeWindowCET && (
                     <>
                       <br />
                       Window: {formatCETDateTime(mission.timeWindowCET.startsAtCET)} -{" "}
                       {formatCETDateTime(mission.timeWindowCET.endsAtCET)}
+                    </>
+                  )}
+                  {mission.type === "intel_recovery" && (
+                    <>
+                      <br />
+                      Upload photo evidence to complete.
                     </>
                   )}
                   {failed && (

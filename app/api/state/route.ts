@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const state = await readState(game.gameCode);
-    const viewer = resolveStateViewerFromRequest(request, game.gameCode, state);
+    const viewer = await resolveStateViewerFromRequest(request, game.gameCode, state);
     return NextResponse.json(filterStateForViewer(state, viewer));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not load game state.";
